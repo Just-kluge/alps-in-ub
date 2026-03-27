@@ -1,0 +1,12 @@
+
+# Auto-added ALPS patterns on 2026年 03月 27日 星期五 11:18:38 CST
+*.csv
+*_table.txt
+*_topology.txt
+*_traffic.txt
+*.log
+*.tmp
+“**/__pycache__/”
+“**/*.pyc”
+“**/*.pyo”
+“**/*.pyd”
