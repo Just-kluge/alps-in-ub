@@ -19,9 +19,17 @@ NS_LOG_COMPONENT_DEFINE("UbTransportChannel");
 NS_OBJECT_ENSURE_REGISTERED(UbTransportChannel);
 
 uint64_t UbTransportChannel::s_totalDataPacketsSent = 0;
-uint64_t UbTransportChannel::s_totalAcksReceived = 0;
-uint64_t UbTransportChannel::s_totalRetransSent = 0;
-uint64_t UbTransportChannel::s_totalpushretrans = 0;
+uint64_t UbTransportChannel::s_totalDataPacketsReceived = 0;
+uint64_t UbTransportChannel::s_totalDuplicateDataPackets = 0;
+uint64_t UbTransportChannel::s_totalActiveRetransSent = 0;
+uint64_t UbTransportChannel::s_totalSwitchDropedPkts = 0;
+uint64_t UbTransportChannel::s_totalSwitchRouteMissDrops = 0;
+uint64_t UbTransportChannel::s_totalSwitchAlpsTagMissingDrops = 0;
+uint64_t UbTransportChannel::s_totalSwitchInPortDropsNonAlps = 0;
+uint64_t UbTransportChannel::s_totalSwitchInPortDropsLdst = 0;
+uint64_t UbTransportChannel::s_totalEgressQueueDrops = 0;
+uint64_t UbTransportChannel::s_totalChannelTxFailedDrops = 0;
+uint64_t UbTransportChannel::s_totaltimeoutretrans = 0;
 bool UbTransportChannel::s_globalStatsReportScheduled = false;
 
 TypeId UbTransportChannel::GetTypeId(void)
@@ -251,7 +259,7 @@ Ptr<Packet> UbTransportChannel::GetNextPacket()
 
 Ptr<Packet> UbTransportChannel::GetNextPacketForAlps()
 {
-    // std::cout << "GetNextPacket called at time " << Simulator::Now().GetNanoSeconds() << " for TP " << m_tpn << std::endl;
+     //std::cout << "GetNextPacket called at time " << Simulator::Now().GetNanoSeconds() << " for TP " << m_tpn << std::endl;
     // 如果有ack，先发ack
     if (!m_ackQ.empty()) {
         Ptr<Packet> p = m_ackQ.front();
@@ -259,6 +267,9 @@ Ptr<Packet> UbTransportChannel::GetNextPacketForAlps()
         if (!IsEmpty()) {
             m_headArrivalTime = Simulator::Now();
         }
+        // std::cout<<"pktSize:"<<p->GetSize()<<" bytes, ACK packet sent for TP "<<m_tpn<<std::endl;
+        // 更新发送时间点，ALPS根据ACK的发送时间和当前速率计算下次发送时间，从而实现速率控制
+         m_congestionCtrl->UpdateNextSendTime(p->GetSize());
         return p;
     }
 
@@ -269,10 +280,6 @@ Ptr<Packet> UbTransportChannel::GetNextPacketForAlps()
         PendingPkt retransPkt = routingProcess->PopAlpsRetransPacket(m_tpn);
        
         if (retransPkt.pktCopy) { 
-            ++s_totalRetransSent;
-            if(s_totalRetransSent%5000==0){
-               std::cout<<"totalRetransSent:"<<s_totalRetransSent<<std::endl;
-            }
             if(false){
                   std::cout<<"[ALPS RTX] Send retrans packet."
                          << " Tpn: " << retransPkt.srcTpn
@@ -280,7 +287,8 @@ Ptr<Packet> UbTransportChannel::GetNextPacketForAlps()
                          << " PacketUid: " << retransPkt.pktCopy->GetUid()<<std::endl;
             }
             AddAplsTagForRetransPacketOnHost(retransPkt.pktCopy, retransPkt.psn);
-           
+           // 更新发送时间点，ALPS根据ACK的发送时间和当前速率计算下次发送时间，从而实现速率控制
+           m_congestionCtrl->UpdateNextSendTime(retransPkt.pktCopy->GetSize());
             return retransPkt.pktCopy->Copy();
         }
     }
@@ -292,6 +300,7 @@ Ptr<Packet> UbTransportChannel::GetNextPacketForAlps()
 
     if (IsInflightLimited()) {
         m_sendWindowLimited = true;
+        std::cout<<"[ALPS] SendWindowLimited"<<std::endl;
         NS_LOG_DEBUG("Full Send Window");
         return nullptr;
     }
@@ -307,16 +316,6 @@ Ptr<Packet> UbTransportChannel::GetNextPacketForAlps()
             payload_size = UB_MTU_BYTE;
         }
 
-        // 计算剩余发送窗口，若不足以发送则返回nullptr。
-        // caqm 算法使能时返回实际剩余窗口，未开启返回uint32MAX
-        // 其余算法待拓展
-        if (m_congestionCtrl->GetCongestionAlgo() == CAQM) {
-            uint32_t rest = m_congestionCtrl->GetRestCwnd();
-            if (rest < payload_size) {
-                return nullptr;
-            }
-            NS_LOG_DEBUG("[Caqm send][restCwnd] Rest cwnd:" << rest);
-        }
 
         Ptr<Packet> p = GenDataPacket(currentSegment, payload_size);
         ++s_totalDataPacketsSent;
@@ -364,6 +363,8 @@ Ptr<Packet> UbTransportChannel::GetNextPacketForAlps()
         if (!IsEmpty()) {
             m_headArrivalTime = Simulator::Now();
         }
+        // 更新发送时间点，ALPS根据ACK的发送时间和当前速率计算下次发送时间，从而实现速率控制
+        m_congestionCtrl->UpdateNextSendTime(p->GetSize());
         return p;
     }
     return nullptr;
@@ -602,6 +603,7 @@ Ptr<Packet> UbTransportChannel::GenDataPacket(Ptr<UbWqeSegment> wqeSegment, uint
  */
 void UbTransportChannel::RecvTpAck(Ptr<Packet> p)
 {
+
     if (p == nullptr) {
         NS_LOG_ERROR("Null ack packet received");
         return;
@@ -617,40 +619,7 @@ void UbTransportChannel::RecvTpAck(Ptr<Packet> p)
     if (TpHeader.GetTPOpcode() == static_cast<uint8_t>(TpOpcode::TP_OPCODE_ACK_WITH_CETPH)) {
         m_congestionCtrl->SenderRecvAck(TpHeader.GetPsn(), CETPH);
     }
-    ++s_totalAcksReceived;
     p->RemoveHeader(AckTaHeader); // 处理接收包信息
-
-
-    //解析APLStag
-          //获取当前节点路由表
-          auto RoutingProcess=NodeList::GetNode(m_nodeId)->GetObject<UbSwitch>()->GetRoutingProcess();
-        if(RoutingProcess->GetRoutingAlgorithm() == UbRoutingProcess::UbRoutingAlgorithm::ALPS){
-           
-          UbAlpsTag ACKalpsTag;
-          p->PeekPacketTag( ACKalpsTag);
-                    const uint32_t ackPsn = ACKalpsTag.GetAckPsn();
-          uint64_t ACK_calDelay=Simulator::Now().GetNanoSeconds()-ACKalpsTag.GetTimeStamp().GetNanoSeconds();
-                    NS_LOG_DEBUG("[ALPS ACK] node=" << m_nodeId
-                                            << " tpn=" << m_tpn
-                                            << " pid=" << ACKalpsTag.GetPathId()
-                                            << " ackPsn=" << ackPsn);
-          //std::cout<<"ACK带回来的时延:"<<ACK_calDelay<<" ns"<<std::endl;
-           //获取ACK对应数据包的路径ID，进而获取路径的实时时延
-          uint32_t packet_pid=UbRoutingProcess::GetReservePid(ACKalpsTag.GetPathId());
-       // std::cout<<"此时路径真实时延:"<<RoutingProcess->GetPathRealDelay(packet_pid,m_src,m_dest)<<" ns"<<std::endl;
-        //修改PIT表
-         auto pstKey =RoutingProcess-> HashPstKey(m_src,m_dest);
-        AlpsPstEntry* pstEntry = RoutingProcess->GetPstEntry( pstKey);
-         for(auto &pitEntry:pstEntry->PitEntries){
-            if(pitEntry->GetPathId()==packet_pid){
-                //目前只更新了两个数据
-                pitEntry->UpdateRealLatency(ACK_calDelay);
-                pitEntry->UpdateLastUpdatedTime(Simulator::Now());
-                break;
-            }
-            //std::cout<<"pitEntry->GetRealLatency():"<<pitEntry->GetRealLatency()<<std::endl;
-         }
-        }
 
 
 
@@ -750,14 +719,8 @@ void UbTransportChannel::RecvTpAckForAlps(Ptr<Packet> p)
 
     p->RemoveHeader(CETPH);
 
-    //拥塞控制
-    if (TpHeader.GetTPOpcode() == static_cast<uint8_t>(TpOpcode::TP_OPCODE_ACK_WITH_CETPH)) {
-        m_congestionCtrl->SenderRecvAck(TpHeader.GetPsn(), CETPH);
-    }
-    ++s_totalAcksReceived;
-    if(s_totalAcksReceived % 5000==0){
-       std::cout<<"totalAcksReceived:"<<s_totalAcksReceived<<std::endl;
-    }
+    
+    
     p->RemoveHeader(AckTaHeader); // 处理接收包信息
 
 
@@ -774,10 +737,12 @@ void UbTransportChannel::RecvTpAckForAlps(Ptr<Packet> p)
                                             << " tpn=" << m_tpn
                                             << " pid=" << ACKalpsTag.GetPathId()
                                             << " ackPsn=" << ackPsn);
-          //std::cout<<"ACK带回来的时延:"<<ACK_calDelay<<" ns"<<std::endl;
+               if(m_src==0&&m_dest==40){
+             //std::cout<<"ACK带回来的时延:"<<ACK_calDelay<<" ns"<<std::endl;
+               }                                 
            //获取ACK对应数据包的路径ID，进而获取路径的实时时延
           uint32_t packet_pid=UbRoutingProcess::GetReservePid(ACKalpsTag.GetPathId());
-       // std::cout<<"此时路径真实时延:"<<RoutingProcess->GetPathRealDelay(packet_pid,m_src,m_dest)<<" ns"<<std::endl;
+         // std::cout<<"此时路径真实时延:"<<RoutingProcess->GetPathRealDelay(packet_pid,m_src,m_dest)<<" ns"<<std::endl;
         //修改PIT表
          auto pstKey =RoutingProcess-> HashPstKey(m_src,m_dest);
         AlpsPstEntry* pstEntry = RoutingProcess->GetPstEntry( pstKey);
@@ -795,11 +760,15 @@ void UbTransportChannel::RecvTpAckForAlps(Ptr<Packet> p)
             RoutingProcess->HandleAlpsAckByPsn(packet_pid, m_tpn, ackPsn,m_sport);
         }
 
-
+       //================拥塞控制==============================
+   
+        m_congestionCtrl->SenderRecvAck(TpHeader.GetPsn(), CETPH);
 
     // 拿到多个packet后组成taack发送
     if ((TpHeader.GetPsn() + 1) > m_psnSndUna) {
-        m_psnSndUna = TpHeader.GetPsn() + 1;
+       
+        const uint64_t newSndUna = TpHeader.GetPsn() + 1;
+        m_psnSndUna = newSndUna;
         if (m_sendWindowLimited && IsInflightLimited() == false) {
             m_sendWindowLimited = false;
             Ptr<UbPort> port = DynamicCast<UbPort>(NodeList::GetNode(m_nodeId)->GetDevice(m_sport));
@@ -868,19 +837,33 @@ void UbTransportChannel::RecvTpAckForAlps(Ptr<Packet> p)
     //     }
     // }
     // if (m_congestionCtrl->GetCongestionAlgo() == CAQM && m_congestionCtrl->GetRestCwnd() >= UB_MTU_BYTE) {
-    //     Ptr<UbPort> port = DynamicCast<UbPort>(NodeList::GetNode(m_nodeId)->GetDevice(m_sport));
-    //     port->TriggerTransmit(); // 触发发送
+         Ptr<UbPort> port = DynamicCast<UbPort>(NodeList::GetNode(m_nodeId)->GetDevice(m_sport));
+         port->TriggerTransmit(); // 触发发送
     // }
     NS_LOG_DEBUG("Recv TP(data packet) acknowledgment");
 }
 
 void UbTransportChannel::ReportGlobalPacketStats()
 {
+    const long long dataSendRecvSignedGap =
+        static_cast<long long>(s_totalDataPacketsSent) - static_cast<long long>(s_totalDataPacketsReceived);
+
     std::cout << "[UbTransportChannel] Global packet stats at simulation end:\n"
               << "  Total data packets sent: " << s_totalDataPacketsSent << "\n"
-              << "  Total ACK packets received: " << s_totalAcksReceived << "\n"
-              << "  Total HAVE retransmitted packets: " << s_totalRetransSent << "\n"
-              << "  Total push retransmitted packets: " << s_totalpushretrans << std::endl;
+              << "  Total data packets received: " << s_totalDataPacketsReceived << "\n"
+              << "  Total duplicate data packets received: " << s_totalDuplicateDataPackets << "\n"
+              << "  Total switch droped packets: " << s_totalSwitchDropedPkts << "\n"
+              << "    - ALPS in-port drops: " << s_totalSwitchDropedPkts << "\n"
+              << "    - non-ALPS in-port drops: " << s_totalSwitchInPortDropsNonAlps << "\n"
+              << "    - LDST in-port drops: " << s_totalSwitchInPortDropsLdst << "\n"
+              << "    - route-miss drops: " << s_totalSwitchRouteMissDrops << "\n"
+              << "    - ALPS tag-missing drops: " << s_totalSwitchAlpsTagMissingDrops << "\n"
+              << "  Total egress-queue drops: " << s_totalEgressQueueDrops << "\n"
+              << "  Total channel-tx-failed drops: " << s_totalChannelTxFailedDrops << "\n"
+              << "  Total Active retransmitted packets: " << s_totalActiveRetransSent << "\n"
+              << "  Total timeout retransmitted packets: " << s_totaltimeoutretrans << "\n"
+               << "  Total  retransmitted packets: " << s_totaltimeoutretrans + s_totalActiveRetransSent << "\n"
+              << "  Data(send-recv) signed gap at stop: " << dataSendRecvSignedGap << std::endl;
 }
 
 
@@ -979,6 +962,7 @@ void UbTransportChannel::RecvDataPacket(Ptr<Packet> p)
             TpHeader.GetPsn(), m_dport);
     }
     if (IsRepeatPacket(psn)) { // 收到重复包了，回复上一个ack
+        ++s_totalDuplicateDataPackets;
         TpHeader.SetTPOpcode(TpOpcode::TP_OPCODE_ACK_WITHOUT_CETPH); // 包类型变为ack
         /**
          * @brief 表示 ACK 确认的是“当前连续收到的最大 PSN”，不是“刚收到的这个包的 PSN”。
@@ -1007,6 +991,7 @@ void UbTransportChannel::RecvDataPacket(Ptr<Packet> p)
             m_headArrivalTime = Simulator::Now();
         }
         m_ackQ.push(ackp); // 将ack放入队列
+        ++s_totalDataPacketsReceived;
         NS_LOG_DEBUG("[Transport channel] Send ack. "
                   << " PacketUid: "  << ackp->GetUid()
                   << " Tpn: " << m_tpn
@@ -1088,6 +1073,7 @@ void UbTransportChannel::RecvDataPacket(Ptr<Packet> p)
         m_headArrivalTime = Simulator::Now();
     }
     m_ackQ.push(ackp); // 将ack放入队列
+    ++s_totalDataPacketsReceived;
     NS_LOG_DEBUG("[Transport channel] Send ack. "
                   << " PacketUid: "  << ackp->GetUid()
                   << " Tpn: " << m_tpn
@@ -1106,6 +1092,10 @@ void UbTransportChannel::RecvDataPacketForAlps(Ptr<Packet> p)
     if (p == nullptr) {
         NS_LOG_ERROR("Null packet received");
         return;
+    }
+    ++s_totalDataPacketsReceived;
+    if ((s_totalDataPacketsReceived)%50000 == 0) {
+       std::cout << "totalDataPacketsReceived: " << s_totalDataPacketsReceived << std::endl;
     }
 
     UbDatalinkPacketHeader pktHeader;
@@ -1166,6 +1156,7 @@ void UbTransportChannel::RecvDataPacketForAlps(Ptr<Packet> p)
             TpHeader.GetPsn(), m_dport);
     }
     if (IsRepeatPacket(psn)) { // 收到重复包了，回复上一个ack
+        ++s_totalDuplicateDataPackets;
         TpHeader.SetTPOpcode(TpOpcode::TP_OPCODE_ACK_WITHOUT_CETPH); // 包类型变为ack
         /**
          * @brief 表示 ACK 确认的是“当前连续收到的最大 PSN”，不是“刚收到的这个包的 PSN”。
@@ -1194,6 +1185,7 @@ void UbTransportChannel::RecvDataPacketForAlps(Ptr<Packet> p)
             m_headArrivalTime = Simulator::Now();
         }
         m_ackQ.push(ackp); // 将ack放入队列
+        
         NS_LOG_DEBUG("[Transport channel] Send ack. "
                   << " PacketUid: "  << ackp->GetUid()
                   << " Tpn: " << m_tpn
@@ -1212,6 +1204,7 @@ void UbTransportChannel::RecvDataPacketForAlps(Ptr<Packet> p)
         // psn=m_psnRecvNxt代表顺序收到包，psn>m_psnRecvNxt代表乱序
         if (!SetBitmap(psn)) {
             // 超出bitmap允许的乱序规格了,先空着, 严重乱序，超过存储能力了，丢包不处理了(不回复ACK)，等重传
+           std::cout<<"Node"<<m_nodeId<<"严重乱序了，丢包不处理，等重传,psn:"<<psn<<" m_psnRecvNxt:"<<m_psnRecvNxt<<std::endl;
             NS_LOG_WARN("Over Out-of-Order! Max Out-of-Order :" << m_psnOooThreshold);
             return;
         }
@@ -1260,6 +1253,7 @@ void UbTransportChannel::RecvDataPacketForAlps(Ptr<Packet> p)
                     m_headArrivalTime = Simulator::Now();
                 }
                 m_ackQ.push(ackp); // 将ack放入队列
+      
                 NS_LOG_DEBUG("[Transport channel] Send out-of-order cumulative ack. "
                              << " PacketUid: "  << ackp->GetUid()
                              << " Tpn: " << m_tpn
@@ -1319,6 +1313,7 @@ void UbTransportChannel::RecvDataPacketForAlps(Ptr<Packet> p)
         m_headArrivalTime = Simulator::Now();
     }
     m_ackQ.push(ackp); // 将ack放入队列
+
     NS_LOG_DEBUG("[Transport channel] Send ack. "
                   << " PacketUid: "  << ackp->GetUid()
                   << " Tpn: " << m_tpn
@@ -1465,10 +1460,7 @@ bool UbTransportChannel::IsEmpty()
          if(routingProcess->HasAlpsRetransPacket(m_tpn)){
         return false;
        }
-       if(m_nodeId == 0){
-        //std::cout<<"Node"<<m_nodeId<<" alps retrans buffer is empty";
-       }
-       
+
     }
     if (m_wqeSegmentVector.empty()) {
         //std::cout<<"wqeSegmentVector is empty"<<std::endl;
@@ -1497,6 +1489,7 @@ bool UbTransportChannel::IsLimited()
 
     if (IsInflightLimited()) {
         m_sendWindowLimited = true;
+        std::cout<<"Node"<<m_nodeId<<"Full Send Window"<<std::endl;
         NS_LOG_DEBUG("Full Send Window");
         return true;
     }

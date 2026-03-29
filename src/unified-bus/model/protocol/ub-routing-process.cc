@@ -421,6 +421,7 @@ uint32_t UbRoutingProcess::GetPidOnHostForPacketSpraying( AlpsPstEntry* pstEntry
         double ratio = -1.0 * pitEntry->GetRealLatency()/maxBaselatency  * 5;
         weights[i] = std::exp(ratio);
         sum_weights += weights[i]; 
+        //std::cout<<"weights["<<i<<"]:"<<weights[i]<<std::endl;
         i++;
      }
      if (sum_weights == 0.0)
@@ -522,7 +523,13 @@ void UbRoutingProcess::HandleAlpsAckByPsn(uint32_t pid, uint32_t srcTpn, uint32_
         }
         m_retransBuffer[srcTpn].push_back(head);
         //std::cout <<"Node"<<m_nodeId<< " 记录了丢失的数据包,"<<"当前缓存数据包个数:"<<m_retransBuffer[srcTpn].size() << std::endl;
-        UbTransportChannel::s_totalpushretrans++;
+
+         ++UbTransportChannel::s_totalActiveRetransSent;
+        if((UbTransportChannel::s_totalActiveRetransSent+UbTransportChannel::s_totaltimeoutretrans)%5000==0){
+               std::cout<<"totalRetransSent:"<<UbTransportChannel::s_totalActiveRetransSent+UbTransportChannel::s_totaltimeoutretrans<<std::endl;
+               std::cout<<"ActiveRetransSent:"<<UbTransportChannel::s_totalActiveRetransSent<<std::endl;
+               std::cout<<"timeoutRetransSent:"<<UbTransportChannel::s_totaltimeoutretrans<<std::endl;
+            }
     }
     if(!matched){
         std::cout<<"发送端接收的ACK清空了缓冲区还是没有找到匹配的数据包,属于误判丢包导致的大规模冗余重传"<<std::endl;
@@ -619,7 +626,7 @@ void UbRoutingProcess::HandleTimeoutForLapsbypid(uint32_t pid, uint32_t srcTpn){
         pendingQ.pop_front();
         m_retransBuffer[srcTpn].push_back(head);
         //std::cout <<"Node"<<m_nodeId<< " 记录了丢失的数据包,"<<"当前缓存数据包个数:"<<m_retransBuffer[srcTpn].size() << std::endl;
-        UbTransportChannel::s_totalpushretrans++;
+        UbTransportChannel::s_totaltimeoutretrans++;
     }
 
     // 超时搬运完成后，清理空队列键与对应事件键，避免长期仿真期间容器残留。

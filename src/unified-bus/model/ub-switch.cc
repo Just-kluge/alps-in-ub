@@ -477,6 +477,7 @@ void UbSwitch::ForwardDataPacket(Ptr<UbPort> port, Ptr<Packet> packet, const Par
     // std::cout << "NodeId:" << nodeId << " inPort:" << port->GetIfIndex() << " selects outPort: " << outPort << " for packet with dip: " << dstIp << std::endl;
     if (outPort < 0) {
         NS_LOG_WARN("The route cannot be found. Packet Dropped!");
+        UbTransportChannel::s_totalSwitchRouteMissDrops++;
         return;
     }
 
@@ -492,7 +493,8 @@ void UbSwitch::ForwardDataPacket(Ptr<UbPort> port, Ptr<Packet> packet, const Par
 
     if (!m_queueManager->CheckInPortSpace(inPort, priority, pSize)) {
         NS_LOG_WARN("NodeId " << GetObject<Node>()->GetId() << " InPort " << inPort << " pri=" << (uint32_t)priority
-                    << " buffer full. Packet Dropped!");
+                    << " buffer full. Packet Dropped!1");
+        UbTransportChannel::s_totalSwitchInPortDropsNonAlps++;
         return;
     }
 
@@ -515,11 +517,13 @@ void UbSwitch::ForwardDataPacketAlps(Ptr<UbPort> port, Ptr<Packet> packet, const
     UbAlpsTag alpsTag;
     if (!packet->PeekPacketTag(alpsTag)) {
         NS_LOG_WARN("ALPS Tag not found! Packet Dropped!");
+        UbTransportChannel::s_totalSwitchAlpsTagMissingDrops++;
         return;
     }
     int outPort = m_routingProcess->GetOutPort(alpsTag);
     if (outPort < 0) {
         NS_LOG_WARN("The route cannot be found. Packet Dropped!");
+        UbTransportChannel::s_totalSwitchRouteMissDrops++;
         return;
     }
 
@@ -571,7 +575,8 @@ void UbSwitch::ForwardDataPacketAlps(Ptr<UbPort> port, Ptr<Packet> packet, const
 
     if (!m_queueManager->CheckInPortSpace(inPort, priority, pSize)) {
         NS_LOG_WARN("NodeId " << GetObject<Node>()->GetId() << " InPort " << inPort << " pri=" << (uint32_t)priority
-                    << " buffer full. Packet Dropped!");
+                    << " buffer full. Packet Dropped!2");
+        UbTransportChannel::s_totalSwitchDropedPkts++;
         return;
     }
 
@@ -660,6 +665,7 @@ void UbSwitch::ForwardDataPacket(Ptr<UbPort> port, Ptr<Packet> packet, const Par
     int outPort = m_routingProcess->GetOutPort(rtKey, selectedShortestPath, port->GetIfIndex());
     if (outPort < 0) {
         NS_LOG_WARN("The route cannot be found. Packet Dropped!");
+        UbTransportChannel::s_totalSwitchRouteMissDrops++;
         return;
     }
 
@@ -675,7 +681,8 @@ void UbSwitch::ForwardDataPacket(Ptr<UbPort> port, Ptr<Packet> packet, const Par
 
     if (!m_queueManager->CheckInPortSpace(inPort, priority, pSize)) {
         NS_LOG_WARN("NodeId " << GetObject<Node>()->GetId() << " InPort " << inPort << " pri=" << (uint32_t)priority
-                    << " buffer full. Packet Dropped!");
+                    << " buffer full. Packet Dropped!3");
+        UbTransportChannel::s_totalSwitchInPortDropsLdst++;
         return;
     }
 

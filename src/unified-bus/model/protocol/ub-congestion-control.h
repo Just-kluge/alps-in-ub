@@ -62,7 +62,8 @@ public:
 
     // 绑定switch，初始化参数
     virtual void SwitchInit(Ptr<UbSwitch> sw) {}
-
+    virtual void UpdateNextSendTime(uint32_t pktsize){}
+    virtual Time GetNextSendTime(){ return Seconds(0); }
     // 绑定tp，初始化参数
     virtual void TpInit(Ptr<UbTransportChannel> tp) {}
 

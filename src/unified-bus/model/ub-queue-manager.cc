@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-only
 #include "ns3/ub-queue-manager.h"
 #include "ns3/ub-header.h"
-
+#include "ns3/ub-congestion-control.h"
 namespace ns3 {
 
 NS_OBJECT_ENSURE_REGISTERED(UbIngressQueue);

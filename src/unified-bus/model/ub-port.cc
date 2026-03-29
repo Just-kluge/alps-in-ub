@@ -4,6 +4,7 @@
 #include "ns3/log.h"
 #include "ns3/ub-network-address.h"
 #include "ns3/ub-caqm.h"
+#include "ns3/ub-transport.h"
 #include "ns3/ub-tag.h"
 using namespace utils;
 
@@ -60,6 +61,7 @@ bool UbEgressQueue::DoEnqueue(PacketEntry packetEntry)
                      << (m_currentBytes + pktSize) << " bytes > limit " << m_maxEgressBytes 
                      << " bytes. Packet dropped (inPort=" << inPortId 
                      << " priority=" << (uint32_t)priority << ")");
+        UbTransportChannel::s_totalEgressQueueDrops++;
         return false;
     }
     //std::cout<<11111111<<ens;
@@ -354,6 +356,7 @@ void UbPort::TransmitPacket(Ptr<Packet> packet, Time delay)
     bool result = m_channel->TransmitStart(packet, this, txTime);
     if (result == false) {
         NS_LOG_WARN("Channel transmission failed! Packet dropped at Node " << GetNode()->GetId() << " Port " << m_portId);
+        UbTransportChannel::s_totalChannelTxFailedDrops++;
         // Reset port state so it won't remain BUSY and try next packet
         m_sendState = SendState::READY;
         m_currentPkt = nullptr;

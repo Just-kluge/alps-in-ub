@@ -1,7 +1,11 @@
 // SPDX-License-Identifier: GPL-2.0-only
+#include <algorithm>
 #include <climits>
+#include <limits>
 #include "ns3/log.h"
+#include "ns3/node-list.h"
 #include "ns3/ub-switch.h"
+#include "ns3/ub-controller.h"
 #include "ns3/ub-transport.h"
 #include "ns3/double.h"
 #include "ns3/enum.h"
@@ -11,6 +15,7 @@
 #include "ns3/ub-port.h"
 #include "ns3/ub-alps.h"
 #include "ns3/ub-utils.h"
+
 
 namespace ns3 {
 
@@ -123,6 +128,15 @@ void UbHostAlps::TpInit(Ptr<UbTransportChannel> tp)
     m_src = tp->GetSrc();
     m_dst = tp->GetDest();
     m_tpn = tp->GetTpn();
+
+    Ptr<Node> senderNode = NodeList::GetNode(m_src);
+    if (senderNode && senderNode->GetNDevices() > 0) {
+        Ptr<UbPort> hostPort = DynamicCast<UbPort>(senderNode->GetDevice(0));
+        if (hostPort) {
+            m_maxRate = hostPort->GetDataRate();
+        }
+    }
+    InitRateControlState();
 }
 
 // 获取剩余窗口，ALPS LDCP需要
@@ -161,10 +175,6 @@ UbNetworkHeader UbHostAlps::SenderGenNetworkHeader()
 void UbHostAlps::SenderUpdateCongestionCtrlData(uint32_t psn, uint32_t size)
 {
     if (m_congestionCtrlEnabled) {
-        // 记录包号对应的发送时间
-        m_psnSendTimeMap[psn] = Simulator::Now();
-        m_dataByteSent += size;
-        m_inFlight += size;
         NS_LOG_DEBUG("[" << GetTypeId().GetName() << "]"
                       << "[Debug]"
                       << "[" << __FUNCTION__ << "]"
@@ -182,12 +192,7 @@ void UbHostAlps::SenderUpdateCongestionCtrlData(uint32_t psn, uint32_t size)
 void UbHostAlps::RecverRecordPacketData(uint32_t psn, uint32_t size, UbNetworkHeader header)
 {
     if (m_congestionCtrlEnabled) {
-        m_recvdPsnPacketSizeMap[psn] = size; // 记录包号对应包的size, C, I, Hint
-        m_recvdPsnCMap[psn] = header.GetC();
-        m_recvdPsnIMap[psn] = header.GetI();
-        uint16_t hint = header.GetHint();
-        hint = GetRealHint(hint, m_ccUnit);
-        m_recvdPsnHintMap[psn] = hint;
+
         NS_LOG_DEBUG("[" << GetTypeId().GetName() << "]"
                   << "[Debug]"
                   << "[" << __FUNCTION__ << "]"
@@ -206,148 +211,221 @@ void UbHostAlps::RecverRecordPacketData(uint32_t psn, uint32_t size, UbNetworkHe
 UbCongestionExtTph UbHostAlps::RecverGenAckCeTphHeader(uint32_t psnStart, uint32_t psnEnd)
 {
     UbCongestionExtTph cetph;
-    if (m_congestionCtrlEnabled) {
-        for (uint32_t i = psnStart; i < psnEnd; i++) {
-            m_dataByteRecvd += m_recvdPsnPacketSizeMap[i];
-            m_recvdPsnPacketSizeMap.erase(i);
-            uint8_t C = m_recvdPsnCMap[i];
-            uint8_t I = m_recvdPsnIMap[i];
-            uint16_t Hint = m_recvdPsnHintMap[i];
-            m_recvdPsnCMap.erase(i);
-            m_recvdPsnIMap.erase(i);
-            m_recvdPsnHintMap.erase(i);
-            if (C == 0 && I == 1) {
-                m_HintE += Hint;
-                m_IE = 1;
-            } else if (C == 1) {
-                m_CE++;
-            }
-        }
-        // 聚合ack，ceTph设置为c_e i_e hint_t
-        NS_LOG_DEBUG("[" << GetTypeId().GetName() << "]"
-                  << "[Debug]"
-                  << "[" << __FUNCTION__ << "]"
-                  << " Gen ack, Local:" << m_src
-                  << " send back to:" << m_dst
-                  << " tpn:" << m_tpn
-                  << " C_E:" << (int)m_CE
-                  << " I_E:" << (int)m_IE
-                  << " Hint_e:" << (int)m_HintE);
-        // 由于ack的sequence字段只有4字节，最多4G，因此在大于3.6G的时候将该数字减去2G以免越界
-        // 发送端接收到骤降的ack sequence后进行相应操作
-        if (m_dataByteRecvd > uint32_t(UINT_MAX * DATA_BYTE_RECVD_RESET_THREASHOLD)) {
-            m_dataByteRecvd -= DATA_BYTE_RECVD_RESET_NUM;
-        }
-        cetph.SetAckSequence(m_dataByteRecvd);
-        cetph.SetC(m_CE);
-        cetph.SetI(m_IE);
-        cetph.SetHint(m_HintE);
-        m_CE = 0;
-        m_IE = 0;
-        m_HintE = 0;
-        return cetph;
-    } else {
-        cetph.SetAckSequence(0);
+    cetph.SetAckSequence(0);
         cetph.SetC(0);
         cetph.SetI(0);
         cetph.SetHint(0);
         return cetph;
-    }
 }
 
 // 发送端收到ack，调整窗口、速率等数据
 void UbHostAlps::SenderRecvAck(uint32_t psn, UbCongestionExtTph header)
 {
-    if (m_congestionCtrlEnabled) {
-        if (Simulator::Now() - m_psnSendTimeMap[psn] < m_rtt || m_rtt == NanoSeconds(0)) {
-            m_rtt = Simulator::Now() - m_psnSendTimeMap[psn];
+    if (!m_congestionCtrlEnabled) {
+        return;
+    }
+
+    m_lastSequence = std::max(m_lastSequence, psn);
+
+    Ptr<Node> senderNode = NodeList::GetNode(m_src);
+    if (!senderNode) {
+        std::cout << "Sender node is null" << std::endl;
+        return;
+    }
+    Ptr<UbSwitch> senderSwitch = senderNode->GetObject<UbSwitch>();
+    if (!senderSwitch) {
+        std::cout << "Sender node has no switch" << std::endl;
+        return;
+    }
+
+    Ptr<UbRoutingProcess> routingProcess = senderSwitch->GetRoutingProcess();
+    if (!routingProcess) {
+        std::cout << "Sender node has no routing process" << std::endl;
+        return;
+    }
+
+    const uint64_t pstKey = UbRoutingProcess::HashPstKey(m_src, m_dst);
+    AlpsPstEntry* pstEntry = routingProcess->GetPstEntry(pstKey);
+    if (!pstEntry || pstEntry->PitEntries.empty()) {
+        std::cout << "PST entry is null" << std::endl;
+        return;
+    }
+
+    bool allPathsCongested = true;
+    uint64_t maxBaseLatencyNs = 1;
+
+    for (const auto* pit : pstEntry->PitEntries) {
+        if (!pit) {
+            std::cout << "PIT entry is null" << std::endl;
+            continue;
         }
-        uint32_t sequence = header.GetAckSequence();
-        if (sequence < m_lastSequence && m_lastSequence > DATA_BYTE_RECVD_RESET_NUM) {
-            m_dataByteSent -= DATA_BYTE_RECVD_RESET_NUM;
-        }
-        m_lastSequence = sequence;
-        m_inFlight = m_dataByteSent - sequence;
-        uint8_t c_e = header.GetC();
-        bool i_e = header.GetI();
-        uint16_t hint = header.GetHint();
-        NS_LOG_DEBUG("[" << GetTypeId().GetName() << "]"
-                  << "[Debug]"
-                  << "[" << __FUNCTION__ << "]"
-                  << " Recv ack."
-                  << " Local:"<< m_src
-                  << " Recv from:" << m_dst
-                  << " Psn:" << psn
-                  << " Tpn:" << m_tpn
-                  << " Sent byte:" << m_dataByteSent
-                  << " Sequence:" << sequence
-                  << " Inflght:" << m_inFlight
-                  << " C_E:" << (int)c_e
-                  << " I_E:" << (int)i_e
-                  << " Hint_e:" << (int)hint);
-        // 收到拥塞或者拒绝增窗反馈，切换至拥塞避免阶段。
-        // 同时重启定时器，一段时间后若仍没有收到含有阻塞或拒绝增窗的ack，则切换到慢启动阶段，
-        if (c_e > 0 || i_e == 0) {
-            NS_LOG_DEBUG("[" << GetTypeId().GetName() << "]"
-                      << "[Debug]"
-                      << "[" << __FUNCTION__ << "]"
-                      << " Congesiton or refuse.");
-            m_congestionState = CONGESTION_AVOIDANCE;
-            m_congestionStateResetEvent.Cancel();
-            m_congestionStateResetEvent =
-                Simulator::Schedule(m_rtt * m_theta,
-                                    &UbHostAlps::StateReset,
-                                    this);
-        }
-        uint32_t oldCwnd;
-        // i为1，增窗
-        if (i_e == 1) {
-            oldCwnd = m_cwnd;
-            m_cwnd += hint;
-            NS_LOG_DEBUG("[" << GetTypeId().GetName() << "]"
-                      << "[Debug]"
-                      << "[" << __FUNCTION__ << "]"
-                      << " Congestion state:" << m_congestionState
-                      << " Cwnd increase:" << oldCwnd
-                      << "->"
-                      << m_cwnd
-                      << " Rest cwnd:" << m_cwnd - m_inFlight);
-        }
-        // 存在阻塞情况
-        if (c_e >= 1 && m_cwnd > UB_MTU_BYTE) {
-            oldCwnd = m_cwnd;
-            // cwnd = max(cwnd - c_e * β * MTU, MTU / 2)
-            m_cwnd = m_cwnd - c_e * m_beta * UB_MTU_BYTE >= UB_MTU_BYTE / 2
-                    ? m_cwnd - c_e * m_beta * UB_MTU_BYTE : UB_MTU_BYTE / 2;
-            NS_LOG_DEBUG("[" << GetTypeId().GetName() << "]"
-                      << "[Debug]"
-                      << "[" << __FUNCTION__ << "]"
-                      << " Congestion state:" << m_congestionState
-                      << " Cwnd > mtu, decrease from:" << oldCwnd
-                      << "->"
-                      << m_cwnd
-                      << " Rest cwnd:" << m_cwnd - m_inFlight);
-        } else if (c_e >= 1 && m_cwnd <= UB_MTU_BYTE) {
-            oldCwnd = m_cwnd;
-            // cwnd = max(cwnd / 2, γ * MTU)
-            m_cwnd = m_cwnd / 2 > m_gamma * UB_MTU_BYTE ? m_cwnd / 2 : m_gamma * UB_MTU_BYTE;
-            NS_LOG_DEBUG("[" << GetTypeId().GetName() << "]"
-                      << "[Debug]"
-                      << "[" << __FUNCTION__ << "]"
-                      << " Congestion state:" << m_congestionState
-                      << " Cwnd <= mtu, decrease from:" << oldCwnd
-                      << "->"
-                      << m_cwnd
-                      << " Rest cwnd:" << m_cwnd - m_inFlight);
-        }
-        if (m_cwnd < UB_MTU_BYTE) {
-            m_cwnd = UB_MTU_BYTE;
-            NS_LOG_DEBUG("[" << GetTypeId().GetName() << "]"
-                      << "[Debug]"
-                      << "[" << __FUNCTION__ << "]"
-                      << " Cwnd < mtu. Reset to UB_MTU_BYTE.");
+        const uint32_t baseLatency = std::max(1u, pit->GetBaseLatency());
+        const uint32_t realLatency = pit->GetRealLatency();
+        maxBaseLatencyNs = std::max(maxBaseLatencyNs, static_cast<uint64_t>(baseLatency));
+        if (realLatency <= baseLatency) {
+
+            allPathsCongested = false;
         }
     }
+
+    const Time maxBaseDelay = NanoSeconds(maxBaseLatencyNs);
+    bool changed = false;
+    if (allPathsCongested) {
+        changed = TrySlowDownForALPS(maxBaseDelay);
+    } else {
+        changed = TrySpeedUpForALPS(maxBaseDelay);
+    }
+          ///=================此处不对====================
+    // if (changed) {
+    //     m_nextSendTime = Simulator::Now();
+    // }
+
+    NS_LOG_DEBUG("[" << GetTypeId().GetName() << "]"
+              << "[Debug]"
+              << "[" << __FUNCTION__ << "]"
+              << " Local:" << m_src
+              << " Recv from:" << m_dst
+              << " Tpn:" << m_tpn
+              << " Psn:" << psn
+              << " AckSeq:" << header.GetAckSequence()
+              << " C:" << static_cast<uint32_t>(header.GetC())
+              << " I:" << static_cast<uint32_t>(header.GetI())
+              << " Hint:" << header.GetHint()
+              << " ConsecutiveSpeedups:" << m_consecutiveSpeedups
+              << " Rate(bps):" << m_currentRate.GetBitRate());
+
+}
+void UbHostAlps::UpdateNextSendTime(uint32_t pktsize){
+     // 计算发送时延：(数据包大小 × 8 bits/byte) / 速率 (bps) = 时间 (秒)
+    // 转换为纳秒：× 1e9
+    double transmissionDelayNs = static_cast<double>(pktsize) * 8.0 * 1e9 / static_cast<double>(m_currentRate.GetBitRate());
+    
+    Time t = Simulator::Now() + NanoSeconds(transmissionDelayNs);
+    
+    //std::cout<<"NODE："<<m_src<<" UpdateNextSendTime: pkt size="<<pktsize<<" bytes, current rate="<<m_currentRate.GetBitRate()/1000000000<<" Gbps, "<<"NanoSeconds(transmissionDelayNs):"<<transmissionDelayNs<<"next send time="<<t.GetNanoSeconds()<<" ns"<<std::endl;    
+     m_nextSendTime = t;
+}
+Time UbHostAlps::GetNextSendTime(){
+  return m_nextSendTime;
+}
+void UbHostAlps::InitRateControlState()
+{
+    Ptr<Node> senderNode = nullptr;
+    if (m_src < NodeList::GetNNodes()) {
+        senderNode = NodeList::GetNode(m_src);
+    }
+
+    if (senderNode) {
+        auto ubSwitch = senderNode->GetObject<UbSwitch>();
+        if (ubSwitch && ubSwitch->GetNodeType() == UB_SWITCH) {
+            // 交换机不处理速率初始化，直接返回
+            return;
+        }
+    }
+
+    uint64_t maxRateBps = m_maxRate.GetBitRate();
+    if (maxRateBps == 0) {
+        maxRateBps = 400000000000ULL; // 100Gbps fallback
+    }
+
+    // uint64_t flowCount = 1;
+
+    // if (senderNode) {
+    //     auto senderController = senderNode->GetObject<UbController>();
+    //     if (senderController) {
+    //         flowCount = std::max<uint64_t>(1, static_cast<uint64_t>(senderController->GetTpnMap().size()));
+    //         if (!senderController->IsTPExists(m_tpn)) {
+    //             flowCount += 1;
+    //         }
+    //     }
+    // }
+   m_maxRate = DataRate(maxRateBps);
+    m_currentRate = DataRate(std::max<uint64_t>(1, maxRateBps / 225));
+    m_baseRate = DataRate(std::min<uint64_t>(maxRateBps, m_currentRate.GetBitRate() * 2));
+    //1Gbps的下限是为了避免过低的速率限制，实际使用中可以根据需要调整
+    m_minRate = DataRate(std::min<uint64_t>(1000000000ULL, maxRateBps));
+ //std::cout<<"NODE："<<m_src<<" InitRateControlState: maxRateBps="<<maxRateBps<<" bytes, flowCount="<<225<<" currentRate="<<m_currentRate.GetBitRate()/1000000000<<" Gbps"<<std::endl;
+  
+    m_nextSlowdownTime = Seconds(0);
+    m_nextSpeedupTime = Seconds(0);
+    m_nextSendTime = Seconds(0);
+    m_consecutiveSpeedups = 0;
+    // = true为允许动态调整发送速率
+    m_rateLimitEnabled = true;
+}
+
+bool UbHostAlps::TrySpeedUpForALPS(Time maxBaseDelay)
+{if(m_src==0&&m_dst==40){
+        //std::cout << "TrySpeedUp" << std::endl;
+    }
+    if (!m_rateLimitEnabled || Simulator::Now() < m_nextSpeedupTime) {
+        return false;
+    }
+    
+
+    const uint64_t maxRateBps = std::max<uint64_t>(1, m_maxRate.GetBitRate());
+    const uint64_t minRateBps = std::min<uint64_t>(m_minRate.GetBitRate(), maxRateBps);
+    const uint64_t currentBps = std::max<uint64_t>(minRateBps, m_currentRate.GetBitRate());
+
+    if (currentBps >= maxRateBps) {
+        std::cout << "TrySpeedUp: Current rate is already at max" << std::endl;
+        return false;
+    }
+        //计算当前数据包还有多少数据没发送
+    uint64_t leftBits=(double)(currentBps)/1000000000*
+    ((m_nextSendTime.GetNanoSeconds()-Simulator::Now().GetNanoSeconds())>=0
+    ?m_nextSendTime.GetNanoSeconds()-Simulator::Now().GetNanoSeconds():0);
+
+    uint64_t baseBps = std::max<uint64_t>(1, m_baseRate.GetBitRate());
+    uint64_t newRateBps = currentBps;
+
+    if (m_consecutiveSpeedups < 5) {
+        newRateBps = (currentBps + baseBps) / 2;
+        ++m_consecutiveSpeedups;
+    } else {
+        baseBps = std::min<uint64_t>(maxRateBps, currentBps * 2);
+        m_baseRate = DataRate(baseBps);
+        newRateBps = (currentBps + baseBps) / 2;
+        m_consecutiveSpeedups = 1;
+    }
+
+    newRateBps = std::min<uint64_t>(maxRateBps, std::max<uint64_t>(minRateBps, newRateBps));
+    m_currentRate = DataRate(newRateBps);
+    // 根据新的发送速率和剩余窗口计算下次发送时间
+    //std::cout<<"NODE："<<m_src<<" TrySpeedUp: "<<"current rate="<<currentBps/1000000000<<" Gbps, "<<"new rate="<<newRateBps/1000000000<<" Gbps, "<<"NanoSeconds(leftBits):"<<leftBits<<"ns"<<std::endl;
+    m_nextSendTime = Simulator::Now()+NanoSeconds(leftBits*1000000000/newRateBps);
+    const Time cooldown = std::max(NanoSeconds(1), maxBaseDelay);
+    m_nextSpeedupTime = Simulator::Now() + cooldown / 2;
+    return true;
+}
+
+bool UbHostAlps::TrySlowDownForALPS(Time maxBaseDelay)
+{   if(m_src==0&&m_dst==40){
+        //std::cout << "TrySlowDown" << std::endl;
+    }
+    if (!m_rateLimitEnabled || Simulator::Now() < m_nextSlowdownTime) {
+        return false;
+    }
+    
+    const uint64_t maxRateBps = std::max<uint64_t>(1, m_maxRate.GetBitRate());
+    const uint64_t minRateBps = std::min<uint64_t>(m_minRate.GetBitRate(), maxRateBps);
+    const uint64_t currentBps = std::min<uint64_t>(maxRateBps, std::max<uint64_t>(minRateBps, m_currentRate.GetBitRate()));
+    const uint64_t newRateBps = std::max<uint64_t>(minRateBps, currentBps / 2);
+    //计算当前数据包还有多少数据没发送
+    uint64_t leftBits=(double)(currentBps)/1000000000*
+    ((m_nextSendTime.GetNanoSeconds()-Simulator::Now().GetNanoSeconds())>=0
+    ?m_nextSendTime.GetNanoSeconds()-Simulator::Now().GetNanoSeconds():0);
+    m_currentRate = DataRate(newRateBps);
+    m_consecutiveSpeedups = 0;
+     // 根据新的发送速率和剩余窗口计算下次发送时间
+    m_nextSendTime = Simulator::Now()+NanoSeconds(leftBits*1000000000/newRateBps);
+    const Time cooldown = std::max(NanoSeconds(1), maxBaseDelay);
+    m_nextSlowdownTime = Simulator::Now() + cooldown;
+    m_nextSpeedupTime= Simulator::Now() + cooldown/2;
+    return true;
+
+
+
 }
 
 void UbHostAlps::StateReset()
@@ -358,11 +436,6 @@ void UbHostAlps::StateReset()
 void UbHostAlps::DoDispose()
 {
     NS_LOG_FUNCTION(this);
-    m_recvdPsnPacketSizeMap.clear();
-    m_recvdPsnHintMap.clear();
-    m_recvdPsnCMap.clear();
-    m_recvdPsnIMap.clear();
-    m_psnSendTimeMap.clear();
     Object::DoDispose();
 }
 
@@ -418,33 +491,8 @@ void UbSwitchAlps::SwitchInit(Ptr<UbSwitch> sw)
 void UbSwitchAlps::ResetLocalCc()
 {
     if (m_congestionCtrlEnabled) {
-        auto node = NodeList::GetNode(m_nodeId);
-        auto sw = node->GetObject<UbSwitch>();
-        uint32_t ndevice = node->GetNDevices();
-        for (uint32_t portId = 0; portId < ndevice; portId++) {
-            // 使用OutPort视图统计VOQ占用
-            uint64_t voqUsed = sw->GetQueueManager()->GetTotalOutPortBufferUsed(portId);
-            
-            // 加上EgressQueue的字节占用
-            Ptr<UbPort> port = DynamicCast<UbPort>(node->GetDevice(portId));
-            uint64_t egressUsed = port->GetUbQueue()->GetCurrentBytes();
-            
-            // 总队列占用 = VOQ + EgressQueue
-            uint64_t totalQueueSize = voqUsed + egressUsed;
-            
-            uint64_t cc = uint64_t(m_lambda *
-                                (m_ccUpdatePeriod.GetSeconds()
-                                * m_bps[portId].GetBitRate() / 8
-                                - m_txSize[portId]
-                                + m_idealQueueSize
-                                - totalQueueSize
-                                - m_creditAllocated[portId]));
-            m_cc[portId] = cc;
-            m_txSize[portId] = 0;
-            m_DC[portId] = 0;
-            m_creditAllocated[portId] = 0;
-        }
-        Simulator::Schedule(m_ccUpdatePeriod, &UbSwitchAlps::ResetLocalCc, this);
+        //空
+        std::cout<<"ResetLocalCc, nodeId: "<<m_nodeId<<std::endl;
     }
 }
 
@@ -458,104 +506,7 @@ void UbSwitchAlps::SetDataRate(uint32_t portId, DataRate bps)
 void UbSwitchAlps::SwitchForwardPacket(uint32_t inPort, uint32_t outPort, Ptr<Packet> p)
 {
     if (m_congestionCtrlEnabled) {
-        UbDatalinkHeader dlHeader;
-        p->PeekHeader(dlHeader);
-        // 只处理config = 3的包，其余忽略
-        if (!dlHeader.IsPacketIpv4Header()) {
-            NS_LOG_DEBUG("[" << GetTypeId().GetName() << "]"
-                      << "[Debug]"
-                      << "[" << __FUNCTION__ << "]"
-                      << " This is not ipv4 packet.");
-            return;
-        }
-        m_txSize[outPort] += p->GetSize();
-        auto node = NodeList::GetNode(m_nodeId);
-        auto sw = node->GetObject<UbSwitch>();
-        
-        // 计算总队列占用 = VOQ + EgressQueue
-        uint64_t voqUsed = sw->GetQueueManager()->GetTotalOutPortBufferUsed(outPort);
-        Ptr<UbPort> port = DynamicCast<UbPort>(node->GetDevice(outPort));
-        uint64_t egressUsed = port->GetUbQueue()->GetCurrentBytes();
-        uint64_t totalQueueSize = voqUsed + egressUsed;
-        
-        NS_LOG_DEBUG("[" << GetTypeId().GetName() << "]"
-                  << "[Debug]"
-                  << "[" << __FUNCTION__ << "]"
-                  << " Node:" << m_nodeId
-                  << " Inport:" << inPort
-                  << " OutPort:" << outPort
-                  << " VOQ:" << voqUsed
-                  << " Egress:" << egressUsed
-                  << " Total queue:" << totalQueueSize
-                  << " Txsize:" << m_txSize[outPort]);
-        UbDatalinkPacketHeader dlPktHeader;
-        UbNetworkHeader netHeader;
-        p->RemoveHeader(dlPktHeader);
-        p->RemoveHeader(netHeader);
-        uint8_t c = netHeader.GetC();
-        uint8_t i = netHeader.GetI();
-        uint16_t hint = netHeader.GetHint();
-        hint = GetRealHint(hint, m_ccUnit);
-        if (c == 1) { // 前面已经被判断拥塞的包，无需再处理，直接增加cc
-            NS_LOG_DEBUG("[" << GetTypeId().GetName() << "]"
-                      << "[Debug]"
-                      << "[" << __FUNCTION__ << "]"
-                      << " Already congestion. Only record.");
-            m_cc[outPort] += m_beta * UB_MTU_BYTE;
-            m_creditAllocated[outPort] -= m_beta * UB_MTU_BYTE;
-        } else if (m_cc[outPort] >= hint * i) { // cc足够，允许增窗
-            NS_LOG_DEBUG("[" << GetTypeId().GetName() << "]"
-                      << "[Debug]"
-                      << "[" << __FUNCTION__ << "]"
-                      << " CC enough."
-                      << " Hint * i:" << hint * i
-                      << " CC:" << m_cc[outPort]
-                      << "->" << m_cc[outPort] - hint * i
-                      << " CreditAllocated:" << m_creditAllocated[outPort]
-                      << "->" << m_creditAllocated[outPort] + hint * i);
-            m_cc[outPort] -= hint * i;
-            m_creditAllocated[outPort] += hint * i;
-        } else if (m_cc[outPort] >= 0) {
-            // cc不足，随机给流减窗，生成一个0~1范围的数字，小于p即可以认为触发了概率事件
-            double res = m_random->GetValue();
-            if (res < m_markProbability) {
-                NS_LOG_DEBUG("[" << GetTypeId().GetName() << "]"
-                          << "[Debug]"
-                          << "[" << __FUNCTION__ << "]"
-                          << " CC not enough. Random result:" << res
-                          << " MK. DC:" << m_DC[outPort]
-                          << "->" << m_DC[outPort] + m_beta * UB_MTU_BYTE);
-                netHeader.SetC(1);
-                netHeader.SetI(0);
-                m_DC[outPort] += m_beta * UB_MTU_BYTE;
-            } else if (res >= m_markProbability && m_DC[outPort] >= hint * i) {
-                NS_LOG_DEBUG("[" << GetTypeId().GetName() << "]"
-                          << "[Debug]"
-                          << "[" << __FUNCTION__ << "]"
-                          << " CC not enough. Random result:" << res
-                          << " Not MK. DC >= hint * i, DC from:" << m_DC[outPort]
-                          << "->" << m_DC[outPort] - hint * i);
-                m_DC[outPort] -= hint * i;
-            } else {
-                NS_LOG_DEBUG("[" << GetTypeId().GetName() << "]"
-                          << "[Debug]"
-                          << "[" << __FUNCTION__ << "]"
-                          << " CC not enough. Random result:" << res
-                          << " Not MK. DC < hint * i, set i = 0");
-                netHeader.SetI(0);
-            }
-        } else { // cc < 0， 阻塞
-            NS_LOG_DEBUG("[" << GetTypeId().GetName() << "]"
-                      << "[Debug]"
-                      << "[" << __FUNCTION__ << "]"
-                      << " Congestion. CC from:" << m_cc[outPort]
-                      << "->" << m_cc[outPort] + m_beta * UB_MTU_BYTE);
-            netHeader.SetC(1);
-            netHeader.SetI(0);
-            m_cc[outPort] += m_beta * UB_MTU_BYTE;
-        }
-        p->AddHeader(netHeader);
-        p->AddHeader(dlPktHeader);
+       // 空
     }
 }
 

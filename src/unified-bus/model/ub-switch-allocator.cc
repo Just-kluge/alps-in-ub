@@ -169,10 +169,7 @@ void UbRoundRobinAllocator::Init()
 }
 
 void UbRoundRobinAllocator::AllocateNextPacket(Ptr<UbPort> outPort)
-{if(m_nodeId == 0){
-   // std::cout<<m_nodeId<< "   UbRoundRobinAllocator::AllocateNextPacket called for port " << outPort->GetIfIndex() << std::endl;
-    
-}
+{
     // 轮询调度
     NS_LOG_DEBUG("[UbRoundRobinAllocator AllocateNextPacket] portId: " << outPort->GetIfIndex());
     auto outPortId = outPort->GetIfIndex();
@@ -196,7 +193,7 @@ void UbRoundRobinAllocator::AllocateNextPacket(Ptr<UbPort> outPort)
         }
     }
     m_isRunning[outPortId] = false;
-    // 通知port发包
+    // ============通知port发包============================
     Simulator::ScheduleNow(&UbPort::NotifyAllocationFinish, outPort);
     if (m_oneMoreRound[outPortId] == true) {
         m_oneMoreRound[outPortId] = false;
@@ -208,22 +205,17 @@ void UbRoundRobinAllocator::AllocateNextPacket(Ptr<UbPort> outPort)
 
 Ptr<UbIngressQueue> UbRoundRobinAllocator::SelectNextIngressQueue(Ptr<UbPort> outPort)
 {
+
+
+    auto routingProcess = NodeList::GetNode(m_nodeId)->GetObject<UbSwitch>()->GetRoutingProcess();    
+     if (routingProcess->GetRoutingAlgorithm() == UbRoutingProcess::UbRoutingAlgorithm::ALPS ){   
+              return SelectNextIngressQueueForALPS(outPort);
+        }
     uint32_t idx;
     uint32_t pi;
     uint32_t outPortId = outPort->GetIfIndex();
     auto node = NodeList::GetNode(m_nodeId);
-    // CongestionCtrlAlgo ccAlg = node->GetObject<UbSwitch>()->GetCongestionCtrl()->GetCongestionAlgo();
-    // if (ccAlg == CongestionCtrlAlgo::CAQM)
-    // {
-    //     std::cout << "UbRoundRobinAllocator::SelectNextIngressQueue: CC Algorithm is CAQM." << std::endl;
-    // }
 
-    // if (ccAlg == CongestionCtrlAlgo::ALPS)
-    // {
-    //     std::cout << "UbRoundRobinAllocator::SelectNextIngressQueue: CC Algorithm is ALPS." << std::endl;
-    // }
-    
-    // std::cout << "CC ALG in SelectNextIngressQueue: " << ccAlg << std::endl;
     
 
     auto vlNum = node->GetObject<UbSwitch>()->GetVLNum();
@@ -231,7 +223,8 @@ Ptr<UbIngressQueue> UbRoundRobinAllocator::SelectNextIngressQueue(Ptr<UbPort> ou
         size_t qSize = m_ingressSources[outPortId][pi].size();
         for (idx = 0; idx < qSize; idx++) {
             auto qidx = (idx + m_rrIdx[outPortId][pi]) % qSize; // 在我们的场景中，我们认为所有的queue都在同一个VL下
-            auto tp = DynamicCast<UbTransportChannel>(m_ingressSources[outPortId][pi][qidx]);
+            auto ingressQueue = m_ingressSources[outPortId][pi][qidx];
+            auto tp = DynamicCast<UbTransportChannel>(ingressQueue);
             auto node_type = node->GetObject<UbSwitch>()->GetNodeType();
             if (tp && (node_type == UB_DEVICE))
             {
@@ -265,6 +258,71 @@ Ptr<UbIngressQueue> UbRoundRobinAllocator::SelectNextIngressQueue(Ptr<UbPort> ou
     }
     return nullptr;
 }
+
+
+
+
+Ptr<UbIngressQueue> UbRoundRobinAllocator::SelectNextIngressQueueForALPS(Ptr<UbPort> outPort)
+{//==================根据速率控制发包========================
+
+    uint32_t idx;
+    uint32_t pi;
+    uint32_t outPortId = outPort->GetIfIndex();
+    auto node = NodeList::GetNode(m_nodeId);
+
+    
+
+    auto vlNum = node->GetObject<UbSwitch>()->GetVLNum();
+    for (pi = 0 ; pi < vlNum; pi++) { //注意，这个channel的优先级，不是报文发送的优先级，而是报文所属的VL的优先级，优先级高的VL会被优先调度
+        
+        size_t qSize = m_ingressSources[outPortId][pi].size();
+       // std::cout<<"pi;"<<pi<<" qSize: "<<qSize<<std::endl;
+        for (idx = 0; idx < qSize; idx++) {
+            auto qidx = (idx + m_rrIdx[outPortId][pi]) % qSize; // 在我们的场景中，我们认为所有的queue都在同一个VL下
+            auto ingressQueue = m_ingressSources[outPortId][pi][qidx];
+            auto tp = DynamicCast<UbTransportChannel>(m_ingressSources[outPortId][pi][qidx]);
+            auto node_type = node->GetObject<UbSwitch>()->GetNodeType();
+            if (tp && (node_type == UB_DEVICE))
+            {
+                //std::cout << "Host:" << m_nodeId << " TP with TPN:" << tp->GetTpn() << " IsEmpty: " << tp->IsEmpty() << " IsLimited: " << tp->IsLimited() << std::endl;
+            }
+            else
+            {
+                if (node_type == UB_DEVICE && (qidx != 0)) 
+                {
+                    std::cout << "vlNum: " << vlNum << " pi: " << pi << " qSize: " << qSize << " qidx: " << qidx << std::endl;
+                    NS_LOG_WARN("Host:" << m_nodeId << " has non-TP ingress queue, which is unexpected." << std::endl);
+                }
+                
+            }
+            bool rateReady = true;
+            auto congestionCtrl = ingressQueue->GetCongestcontrol();
+            if (congestionCtrl)
+            {
+                rateReady = congestionCtrl->GetNextSendTime() <= Simulator::Now();
+            }
+
+            if (!ingressQueue->IsEmpty() &&
+                !ingressQueue->IsLimited() &&
+                !outPort->GetFlowControl()->IsFcLimited(ingressQueue) &&
+                rateReady)
+            {
+                m_rrIdx[outPortId][pi] = (qidx + 1) % qSize;
+                NS_LOG_DEBUG("[UbSwitchAllocator DispatchPacket] " << " NodeId: " << node->GetId()
+                << " PortId: " << outPortId <<" qidx: "<< qidx);
+                return ingressQueue;
+            }
+            else{
+                if(m_nodeId==0){
+                      //std::cout<<"Node"<<m_nodeId<<" qidx: "<<qidx<<" IsEmpty: "<<!m_ingressSources[outPortId][pi][qidx]->IsEmpty()<<" IsLimited: "<<!m_ingressSources[outPortId][pi][qidx]->IsLimited()<<" IsFcLimited: "<<!outPort->GetFlowControl()->IsFcLimited(m_ingressSources[outPortId][pi][qidx])<<std::endl;
+            
+                }
+              }
+        }
+    }
+    return nullptr;
+}
+
 
 
 /*-----------------------------------------UbDwrrAllocator----------------------------------------------*/

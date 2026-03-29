@@ -21,7 +21,6 @@ class UbPort;
 class UbWqe;
 class UbWqeSegment;
 class UbJetty;
-
 const uint32_t UB_TP_PSN_OOO_THRESHOLD = 2048;   // Jetty分段乱序阈值（用于乱序缓存等）
 
 /**
@@ -82,6 +81,7 @@ public:
     uint32_t GetNextPacketSize();
     bool IsEmpty() override;
     bool IsLimited() override;
+    Ptr<UbCongestionControl> GetCongestcontrol(){return m_congestionCtrl;}
 
     Ptr<Packet> GenDataPacket(Ptr<UbWqeSegment> wqeSegment, uint32_t payload_size);
 
@@ -336,9 +336,17 @@ private:
      public:
     // Global counters across all TP instances in one simulation run.
     static uint64_t s_totalDataPacketsSent;
-    static uint64_t s_totalAcksReceived;
-    static uint64_t s_totalRetransSent;
-    static uint64_t s_totalpushretrans;
+    static uint64_t s_totalDataPacketsReceived;
+    static uint64_t s_totalDuplicateDataPackets;
+    static uint64_t s_totalActiveRetransSent;
+    static uint64_t s_totalSwitchDropedPkts;
+    static uint64_t s_totalSwitchRouteMissDrops;
+    static uint64_t s_totalSwitchAlpsTagMissingDrops;
+    static uint64_t s_totalSwitchInPortDropsNonAlps;
+    static uint64_t s_totalSwitchInPortDropsLdst;
+    static uint64_t s_totalEgressQueueDrops;
+    static uint64_t s_totalChannelTxFailedDrops;
+    static uint64_t s_totaltimeoutretrans;
     static bool s_globalStatsReportScheduled;
 };
 

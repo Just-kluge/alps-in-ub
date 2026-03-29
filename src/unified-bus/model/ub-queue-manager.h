@@ -9,7 +9,7 @@
 #include "ub-network-address.h"
 
 namespace ns3 {
-
+class UbCongestionControl;
 constexpr long DEFAULT_INPORT_PRIORITY_BUFFER_SIZE = 1048576;  // 1MB
 
 enum class IngressQueueType {
@@ -46,7 +46,7 @@ public:
     bool IsControlFrame();
     bool IsForwardedDataPacket();
     bool IsGeneratedDataPacket();
-
+    virtual Ptr<UbCongestionControl> GetCongestcontrol(){return nullptr;}
 protected:
     Time m_headArrivalTime = Seconds(0);
 

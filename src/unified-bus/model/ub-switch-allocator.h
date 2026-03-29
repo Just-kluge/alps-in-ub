@@ -59,6 +59,7 @@ public:
 
     virtual void Init() override;
     Ptr<UbIngressQueue> SelectNextIngressQueue(Ptr<UbPort> outPort);
+    Ptr<UbIngressQueue> SelectNextIngressQueueForALPS(Ptr<UbPort> outPort);
     virtual void AllocateNextPacket(Ptr<UbPort> outPort) override;
 
 private:
