@@ -58,9 +58,7 @@ void UbSwitchAllocator::TriggerAllocator(Ptr<UbPort> outPort)
         // 2. 下一次 trigger 会被当前轮次的状态掩盖
         m_oneMoreRound[outPortId] = true;
         NS_LOG_DEBUG("[" << typeName << " TriggerAllocator] Allocator is running, will retrigger.");
-        if(m_nodeId == 0||true){
-            //std::cout<<m_nodeId<< "   UbSwitchAllocator::TriggerAllocator called for port " << outPort->GetIfIndex() << std::endl;
-        }
+
         return;
     }
     m_isRunning[outPortId] = true;

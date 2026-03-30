@@ -261,7 +261,7 @@ void UbHostAlps::SenderRecvAck(uint32_t psn, UbCongestionExtTph header)
         }
         const uint32_t baseLatency = std::max(1u, pit->GetBaseLatency());
         const uint32_t realLatency = pit->GetRealLatency();
-        maxBaseLatencyNs = std::max(maxBaseLatencyNs, static_cast<uint64_t>(baseLatency));
+        maxBaseLatencyNs =  static_cast<uint64_t>(baseLatency);
         if (realLatency <= baseLatency) {
 
             allPathsCongested = false;
@@ -295,7 +295,7 @@ void UbHostAlps::SenderRecvAck(uint32_t psn, UbCongestionExtTph header)
               << " Rate(bps):" << m_currentRate.GetBitRate());
 
 }
-void UbHostAlps::UpdateNextSendTime(uint32_t pktsize){
+void UbHostAlps::UpdateNextSendTime(uint32_t pktsize,uint32_t port){
      // 计算发送时延：(数据包大小 × 8 bits/byte) / 速率 (bps) = 时间 (秒)
     // 转换为纳秒：× 1e9
     double transmissionDelayNs = static_cast<double>(pktsize) * 8.0 * 1e9 / static_cast<double>(m_currentRate.GetBitRate());
@@ -304,6 +304,17 @@ void UbHostAlps::UpdateNextSendTime(uint32_t pktsize){
     
     //std::cout<<"NODE："<<m_src<<" UpdateNextSendTime: pkt size="<<pktsize<<" bytes, current rate="<<m_currentRate.GetBitRate()/1000000000<<" Gbps, "<<"NanoSeconds(transmissionDelayNs):"<<transmissionDelayNs<<"next send time="<<t.GetNanoSeconds()<<" ns"<<std::endl;    
      m_nextSendTime = t;
+     
+     
+     
+     // 关键修复：使用 Schedule 确保在下一个仿真时刻触发
+
+     Ptr<UbPort> m_port = DynamicCast<UbPort>(NodeList::GetNode(m_src)->GetDevice(port));
+     if(port!=0){
+        std::cout<<"host应该只有编号为0的端口，但是此处端口为"<<port<<std::endl;
+     }
+    auto allocator = NodeList::GetNode(m_src)->GetObject<UbSwitch>()->GetAllocator();
+    Simulator::Schedule(NanoSeconds(transmissionDelayNs),&UbSwitchAllocator::TriggerAllocator, allocator, m_port);
 }
 Time UbHostAlps::GetNextSendTime(){
   return m_nextSendTime;

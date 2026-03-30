@@ -269,7 +269,7 @@ Ptr<Packet> UbTransportChannel::GetNextPacketForAlps()
         }
         // std::cout<<"pktSize:"<<p->GetSize()<<" bytes, ACK packet sent for TP "<<m_tpn<<std::endl;
         // 更新发送时间点，ALPS根据ACK的发送时间和当前速率计算下次发送时间，从而实现速率控制
-         m_congestionCtrl->UpdateNextSendTime(p->GetSize());
+         m_congestionCtrl->UpdateNextSendTime(p->GetSize(), m_sport);
         return p;
     }
 
@@ -288,8 +288,8 @@ Ptr<Packet> UbTransportChannel::GetNextPacketForAlps()
             }
             AddAplsTagForRetransPacketOnHost(retransPkt.pktCopy, retransPkt.psn);
            // 更新发送时间点，ALPS根据ACK的发送时间和当前速率计算下次发送时间，从而实现速率控制
-           m_congestionCtrl->UpdateNextSendTime(retransPkt.pktCopy->GetSize());
-            return retransPkt.pktCopy->Copy();
+           m_congestionCtrl->UpdateNextSendTime(retransPkt.pktCopy->GetSize(), m_sport);
+            return retransPkt.pktCopy;
         }
     }
 
@@ -364,7 +364,7 @@ Ptr<Packet> UbTransportChannel::GetNextPacketForAlps()
             m_headArrivalTime = Simulator::Now();
         }
         // 更新发送时间点，ALPS根据ACK的发送时间和当前速率计算下次发送时间，从而实现速率控制
-        m_congestionCtrl->UpdateNextSendTime(p->GetSize());
+        m_congestionCtrl->UpdateNextSendTime(p->GetSize(), m_sport);
         return p;
     }
     return nullptr;

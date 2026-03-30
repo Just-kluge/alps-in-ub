@@ -76,7 +76,7 @@ public:
     // 发送端收到ack，调整窗口、速率等数据
     void SenderRecvAck(uint32_t psn, UbCongestionExtTph header) override;
    
-    void UpdateNextSendTime(uint32_t pktsize);
+    void UpdateNextSendTime(uint32_t pktsize,uint32_t port);
 
     Time GetNextSendTime();
 private:

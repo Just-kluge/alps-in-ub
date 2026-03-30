@@ -418,7 +418,7 @@ uint32_t UbRoutingProcess::GetPidOnHostForPacketSpraying( AlpsPstEntry* pstEntry
     for (auto pitEntry : pstEntry->PitEntries)
      {
     
-        double ratio = -1.0 * pitEntry->GetRealLatency()/maxBaselatency  * 5;
+        double ratio = -1.0 * pitEntry->GetRealLatency()/maxBaselatency ;
         weights[i] = std::exp(ratio);
         sum_weights += weights[i]; 
         //std::cout<<"weights["<<i<<"]:"<<weights[i]<<std::endl;
@@ -541,10 +541,12 @@ void UbRoutingProcess::HandleAlpsAckByPsn(uint32_t pid, uint32_t srcTpn, uint32_
 
     SetTimeoutForLapsbypid(pid,srcTpn);
 
+    // 关键修复：使用 ScheduleNow 确保在下一个仿真时刻触发，避免当前上下文冲突
     if(!m_retransBuffer[srcTpn].empty()){
          Ptr<UbPort> port = DynamicCast<UbPort>(NodeList::GetNode(m_nodeId)->GetDevice(m_sport));
-        port->TriggerTransmit(); // 触发发送
-    }
+        // Deleted:port->TriggerTransmit();
+        Simulator::ScheduleNow(&UbPort::TriggerTransmit, port);
+   }
     return;
 }
 
@@ -634,8 +636,9 @@ void UbRoutingProcess::HandleTimeoutForLapsbypid(uint32_t pid, uint32_t srcTpn){
         m_pendingByPid.erase(it);
     }
     m_rtoEventsPerPath.erase(pid);
-    Ptr<UbPort> port = DynamicCast<UbPort>(NodeList::GetNode(m_nodeId)->GetDevice(0));
-    port->TriggerTransmit(); // 触发发送
+     Ptr<UbPort> port = DynamicCast<UbPort>(NodeList::GetNode(m_nodeId)->GetDevice(0));
+     Simulator::ScheduleNow(&UbPort::TriggerTransmit, port);
+    
     }
 
 
