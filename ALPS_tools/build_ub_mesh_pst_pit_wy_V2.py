@@ -885,7 +885,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Build UB Mesh path_index_table.csv and path_search_table.csv")
     parser.add_argument(
         "--case-dir",
-        default="/app/ns-3-ub/scratch/tp_UB_Mesh_V0001",
+        default="/app/ns-3-ub/scratch/tp_UB_Mesh_V0002",#4月1号下午，jyxiao改
         help="Directory containing node.csv and topology.csv",
     )
     args = parser.parse_args()

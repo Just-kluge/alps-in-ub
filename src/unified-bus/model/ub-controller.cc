@@ -7,6 +7,9 @@
 #include "protocol/ub-transaction.h"
 #include "ns3/ub-network-address.h"
 #include "ns3/ub-utils.h"
+#include "ns3/simulator.h"
+#include "ns3/ub-alps.h"
+#include <fstream>
 
 using namespace utils;
 namespace ns3 {
@@ -244,6 +247,65 @@ Ptr<UbTransaction> UbController::GetUbTransaction()
 std::map<uint32_t, Ptr<UbTransportChannel>> UbController::GetTpnMap() const
 {
     return m_numToTp;
+}
+
+bool UbController::DumpUnfinishedTpReport(const std::string& filePath) const
+{
+    std::ofstream out(filePath.c_str(), std::ios::out | std::ios::app);
+    if (!out.is_open()) {
+        NS_LOG_WARN("Failed to open tp monitor log: " << filePath);
+        return false;
+    }
+
+    uint32_t unfinishedCount = 0;
+    for (const auto& item : m_numToTp) {
+        const Ptr<UbTransportChannel>& tp = item.second;
+        if (!tp) {
+            continue;
+        }
+        if (tp->GetCurrentSqSize() > 0) {
+            unfinishedCount++;
+        }
+    }
+
+    if (unfinishedCount == 0) {
+        return false;
+    }
+
+    const uint32_t nodeId = GetObject<Node>() ? GetObject<Node>()->GetId() : UINT32_MAX;
+    out << "================================================================================\n";
+    out << "[TpMonitor] nodeId=" << nodeId
+        << " timeUs=" << Simulator::Now().GetMicroSeconds()
+        << " unfinishedTpCount=" << unfinishedCount
+        << " totalTpCount=" << m_numToTp.size() << "\n";
+
+    for (const auto& item : m_numToTp) {
+        const uint32_t tpn = item.first;
+        const Ptr<UbTransportChannel>& tp = item.second;
+        if (!tp) {
+            continue;
+        }
+        if (tp->GetCurrentSqSize() == 0) {
+            continue;
+        }
+        auto allocator = NodeList::GetNode(nodeId)->GetObject<UbSwitch>()->GetAllocator();
+        out << "TPN=" << tpn
+            << " Rate=" << DynamicCast<UbHostAlps>(tp->GetCongestcontrol())->GetRate()
+            <<" nextSendTime=" << tp->GetCongestcontrol()->GetNextSendTime().GetNanoSeconds()
+            <<" lastVisitTime=" << DynamicCast<UbHostAlps>(tp->GetCongestcontrol())->GetLastVisitTime().GetNanoSeconds()
+             <<" lastVisitReason=" << DynamicCast<UbHostAlps>(tp->GetCongestcontrol())->GetLastVisitReason()
+            << " outport是否在运行=" << allocator->GetisRunning(0)
+            << " src=" << tp->GetSrc()
+            << " dst=" << tp->GetDest()
+            << " dstTpn=" << tp->GetDstTpn()
+            << " sqSize=" << tp->GetCurrentSqSize()
+            << " isEmpty=" << (tp->IsEmpty() ? 1 : 0)
+            << " queueSnapshot=" << tp->GetWqeQueueSnapshot(8)
+            << "\n";
+    }
+
+    out << "================================================================================\n";
+    return true;
 }
 
 bool UbController::AddTpMapping(uint32_t key, Ptr<UbTransportChannel> tp)

@@ -3,9 +3,12 @@
 #define UB_FUNCTION_H
 
 #include <ns3/node.h>
+#include <ns3/callback.h>
+#include <ostream>
 #include <set>
 #include <unordered_map>
 #include <bitset>
+#include <string>
 #include "ub-transport.h"
 #include "ns3/ub-datatype.h"
 #include "ns3/ub-network-address.h"
@@ -51,6 +54,8 @@ namespace ns3 {
          */
         void DestroyJetty(uint32_t jettyNum);
 
+        bool DumpUnfinishedJettyReport(const std::string& filePath) const;
+
         /**
          * @brief Assemble wqe
          * @param Client传入URMA任务
@@ -85,6 +90,8 @@ namespace ns3 {
         Ptr<UbWqeSegment> GetNextWqeSegment();
         bool ProcessWqeSegmentComplete(uint32_t taSsnFin);
         void RightShiftBitset(uint32_t shiftCount);
+        bool HasPendingWqe() const;
+        void WriteUnfinishedReport(std::ostream& os) const;
 
         Ptr<UbWqeSegment> GenWqeSegment(Ptr<UbWqe> wqe, uint32_t segment_size);
 
@@ -118,6 +125,16 @@ namespace ns3 {
         uint32_t GetDest() const
         {
             return m_dest;
+        }
+
+        uint32_t GetTaSsnSndNxt() const
+        {
+            return m_taSsnSndNxt;
+        }
+
+        uint32_t GetTaSsnSndUna() const
+        {
+            return m_taSsnSndUna;
         }
 
         uint8_t GetSport() const

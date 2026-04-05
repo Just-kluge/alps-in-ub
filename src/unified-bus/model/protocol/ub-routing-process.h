@@ -141,10 +141,15 @@ public:
      * 输出：反向路径ID
      */
     static uint32_t GetReservePid(uint32_t pid);
+    static uint64_t MakeNodePortKey(uint32_t nodeId, uint32_t outPort);
+     void UpdateNodePortQueueDelay(uint32_t nodeId, uint32_t outPort, uint32_t delayNs);
+     uint32_t GetNodePortQueueDelay(uint32_t nodeId, uint32_t outPort);
     /**
      * @brief 构建路径id与反向路径id映射,根据某一路径pid查找反向路径pid，ACK用反向路径pid在交换机上可以快速找到其数据包的出端口。
      */
     static std::unordered_map<uint32_t, uint32_t> m_Pid2ReservePid; // 
+    // key=(nodeId<<32)|outPort，value=该端口最近一次观测到的数据包排队时延(ns)
+     std::unordered_map<uint64_t, uint32_t> m_NodePortQueueDelayNs;
 
     // ALPS sender-side packet buffer APIs (step 4: declarations only).
     void RecordAlpsSentPacket(uint32_t pid, const PendingPkt& pkt);

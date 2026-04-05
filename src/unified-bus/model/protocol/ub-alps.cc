@@ -7,6 +7,7 @@
 #include "ns3/ub-switch.h"
 #include "ns3/ub-controller.h"
 #include "ns3/ub-transport.h"
+#include "../monitor/ub-monitor.h"
 #include "ns3/double.h"
 #include "ns3/enum.h"
 #include "ns3/data-rate.h"
@@ -260,20 +261,20 @@ void UbHostAlps::SenderRecvAck(uint32_t psn, UbCongestionExtTph header)
             continue;
         }
         const uint32_t baseLatency = std::max(1u, pit->GetBaseLatency());
-        const uint32_t realLatency = pit->GetRealLatency();
-        maxBaseLatencyNs =  static_cast<uint64_t>(baseLatency);
+        const uint64_t realLatency = pit->GetRealTimeLatency(routingProcess);
+        maxBaseLatencyNs = std::max(maxBaseLatencyNs, static_cast<uint64_t>(baseLatency));
         if (realLatency <= baseLatency) {
 
             allPathsCongested = false;
         }
     }
-
+    //std::cout << "maxBaseLatencyNs:" << maxBaseLatencyNs << std::endl;
     const Time maxBaseDelay = NanoSeconds(maxBaseLatencyNs);
-    bool changed = false;
+
     if (allPathsCongested) {
-        changed = TrySlowDownForALPS(maxBaseDelay);
+       TrySlowDownForALPS(maxBaseDelay);
     } else {
-        changed = TrySpeedUpForALPS(maxBaseDelay);
+       TrySpeedUpForALPS(maxBaseDelay);
     }
           ///=================此处不对====================
     // if (changed) {
@@ -304,17 +305,36 @@ void UbHostAlps::UpdateNextSendTime(uint32_t pktsize,uint32_t port){
     
     //std::cout<<"NODE："<<m_src<<" UpdateNextSendTime: pkt size="<<pktsize<<" bytes, current rate="<<m_currentRate.GetBitRate()/1000000000<<" Gbps, "<<"NanoSeconds(transmissionDelayNs):"<<transmissionDelayNs<<"next send time="<<t.GetNanoSeconds()<<" ns"<<std::endl;    
      m_nextSendTime = t;
-     
-     
-     
      // 关键修复：使用 Schedule 确保在下一个仿真时刻触发
 
      Ptr<UbPort> m_port = DynamicCast<UbPort>(NodeList::GetNode(m_src)->GetDevice(port));
      if(port!=0){
         std::cout<<"host应该只有编号为0的端口，但是此处端口为"<<port<<std::endl;
      }
-    auto allocator = NodeList::GetNode(m_src)->GetObject<UbSwitch>()->GetAllocator();
-    Simulator::Schedule(NanoSeconds(transmissionDelayNs),&UbSwitchAllocator::TriggerAllocator, allocator, m_port);
+     auto allocator = NodeList::GetNode(m_src)->GetObject<UbSwitch>()->GetAllocator();
+      // 取消之前的定时器（如果有）
+     if (m_nextSendTimerEvent.IsPending()) {
+         Simulator::Cancel(m_nextSendTimerEvent);
+     }
+    // 调度下一次触发端口发送的定时器
+     m_nextSendTimerEvent =Simulator::Schedule(NanoSeconds(transmissionDelayNs),&UbSwitchAllocator::TriggerAllocator, allocator, m_port);
+      //std::cout<<"NODE："<<m_src<<" UpdateNextSendTime: pkt size="<<pktsize<<" bytes, current rate="<<m_currentRate.GetBitRate()/1000000000<<" Gbps, "<<"NanoSeconds(transmissionDelayNs):"<<transmissionDelayNs<<"next send time="<<t.GetNanoSeconds()<<" ns"<<std::endl;
+    //Simulator::Schedule(NanoSeconds(transmissionDelayNs),&UbPort::TriggerTransmit, m_port);
+}
+void UbHostAlps::UpdateNextSendTimeForRateAdjustment(uint32_t RemaintransmissionDelayinNs){
+    Time t = Simulator::Now() + NanoSeconds(RemaintransmissionDelayinNs);
+    m_nextSendTime = t;
+    //====================================host侧只有出端口，且编号为0，========================================
+     Ptr<UbPort> m_port = DynamicCast<UbPort>(NodeList::GetNode(m_src)->GetDevice(0));
+     auto allocator = NodeList::GetNode(m_src)->GetObject<UbSwitch>()->GetAllocator();
+      // 取消之前的定时器（如果有）
+     if (m_nextSendTimerEvent.IsPending()) {
+         Simulator::Cancel(m_nextSendTimerEvent);
+     }
+    // 调度下一次触发端口发送的定时器
+     m_nextSendTimerEvent =Simulator::Schedule(NanoSeconds(RemaintransmissionDelayinNs),&UbSwitchAllocator::TriggerAllocator, allocator, m_port);
+
+    
 }
 Time UbHostAlps::GetNextSendTime(){
   return m_nextSendTime;
@@ -336,22 +356,12 @@ void UbHostAlps::InitRateControlState()
 
     uint64_t maxRateBps = m_maxRate.GetBitRate();
     if (maxRateBps == 0) {
-        maxRateBps = 400000000000ULL; // 100Gbps fallback
+        maxRateBps = 400000000000ULL; // 400Gbps fallback
     }
 
-    // uint64_t flowCount = 1;
-
-    // if (senderNode) {
-    //     auto senderController = senderNode->GetObject<UbController>();
-    //     if (senderController) {
-    //         flowCount = std::max<uint64_t>(1, static_cast<uint64_t>(senderController->GetTpnMap().size()));
-    //         if (!senderController->IsTPExists(m_tpn)) {
-    //             flowCount += 1;
-    //         }
-    //     }
-    // }
-   m_maxRate = DataRate(maxRateBps);
-    m_currentRate = DataRate(std::max<uint64_t>(1, maxRateBps / 225));
+    const UbAlpsPacketTracker::FlowType tpType = UbAlpsPacketTracker::ClassifyFlowType(m_src, m_dst);
+    m_maxRate = DataRate(maxRateBps);
+    m_currentRate = UbAlpsPacketTracker::EstimateInitialRateByType(m_src, tpType, m_maxRate);
     m_baseRate = DataRate(std::min<uint64_t>(maxRateBps, m_currentRate.GetBitRate() * 2));
     //1Gbps的下限是为了避免过低的速率限制，实际使用中可以根据需要调整
     m_minRate = DataRate(std::min<uint64_t>(1000000000ULL, maxRateBps));
@@ -404,9 +414,10 @@ bool UbHostAlps::TrySpeedUpForALPS(Time maxBaseDelay)
     m_currentRate = DataRate(newRateBps);
     // 根据新的发送速率和剩余窗口计算下次发送时间
     //std::cout<<"NODE："<<m_src<<" TrySpeedUp: "<<"current rate="<<currentBps/1000000000<<" Gbps, "<<"new rate="<<newRateBps/1000000000<<" Gbps, "<<"NanoSeconds(leftBits):"<<leftBits<<"ns"<<std::endl;
-    m_nextSendTime = Simulator::Now()+NanoSeconds(leftBits*1000000000/newRateBps);
+     uint32_t remainingTimeNs = leftBits * 1000000000 / newRateBps;
+    UpdateNextSendTimeForRateAdjustment(remainingTimeNs);
     const Time cooldown = std::max(NanoSeconds(1), maxBaseDelay);
-    m_nextSpeedupTime = Simulator::Now() + cooldown / 2;
+    m_nextSpeedupTime = Simulator::Now() + cooldown /2;
     return true;
 }
 
@@ -429,7 +440,8 @@ bool UbHostAlps::TrySlowDownForALPS(Time maxBaseDelay)
     m_currentRate = DataRate(newRateBps);
     m_consecutiveSpeedups = 0;
      // 根据新的发送速率和剩余窗口计算下次发送时间
-    m_nextSendTime = Simulator::Now()+NanoSeconds(leftBits*1000000000/newRateBps);
+    uint32_t remainingTimeNs = leftBits * 1000000000 / newRateBps;
+    UpdateNextSendTimeForRateAdjustment(remainingTimeNs);
     const Time cooldown = std::max(NanoSeconds(1), maxBaseDelay);
     m_nextSlowdownTime = Simulator::Now() + cooldown;
     m_nextSpeedupTime= Simulator::Now() + cooldown/2;

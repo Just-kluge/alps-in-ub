@@ -10,7 +10,6 @@
 #include <ostream>
 #include "ns3/ptr.h"
 #include <ns3/nstime.h>
-
 #ifndef DEFAULT_PRECISION_FOR_FLOAT_TO_STRING
 #define DEFAULT_PRECISION_FOR_FLOAT_TO_STRING 4
 #endif
@@ -22,7 +21,7 @@
 #define LINK_DELAY  20    //链路传播延迟  ns
 namespace ns3 {
 
-
+class UbRoutingProcess;
     template <typename T>
 std::string ToString(T src) {
   std::stringstream ss;
@@ -60,8 +59,8 @@ class AlpsPitEntry
     uint32_t reversePathId; // 反向路径ID
     std::vector<uint32_t> nodes;  // ALPS路径对应的入端口列表
     std::vector<uint32_t> ports; // ALPS路径对应的出端口列表
-    uint32_t baseLatency; // ALPS路径的基本时延
-    uint32_t realLatency; // ALPS路径的实际时延，包含排队时延等
+    uint32_t baseLatency; // ALPS路径的基准时延，路径时延超过此值即视为拥塞
+    uint32_t noQueueLatencyNs; // ALPS路径的无队列时延，不包含排队时延等
     Time lastUpdatedTime; // 上次更新时间
     Time lastProbeTime; // 上次探测时间
     public:
@@ -83,15 +82,15 @@ class AlpsPitEntry
     void SetBaseLatency(uint32_t baseLatency) { this->baseLatency = baseLatency; }
     uint32_t GetBaseLatency() const { return baseLatency; }
 
-    void UpdateRealLatency(uint32_t realLatency) { this->realLatency = realLatency; }
-    uint32_t GetRealLatency() const { return realLatency; }
-
+    void SetNoQueueLatency(uint32_t noQueueLatency) { this->noQueueLatencyNs = noQueueLatency; }
+    uint32_t GetNoQueueLatency() const { return noQueueLatencyNs; }
+    uint32_t GetRealTimeLatency(Ptr<UbRoutingProcess> ubRoutingProcess) const ;
     void UpdateLastUpdatedTime(Time lastUpdatedTime) { this->lastUpdatedTime = lastUpdatedTime; }
     Time GetLastUpdatedTime() const { return lastUpdatedTime; }
 
     void UpdateLastProbeTime(Time lastProbeTime) { this->lastProbeTime = lastProbeTime; }
     Time GetLastProbeTime() const { return lastProbeTime; }
-    AlpsPitEntry() : pathId(0), length(0), reversePathId(0), baseLatency(0), realLatency(0)
+    AlpsPitEntry() : pathId(0), length(0), reversePathId(0), baseLatency(0), noQueueLatencyNs(0)
     {
         nodes.clear();
         ports.clear();
@@ -103,17 +102,17 @@ class AlpsPitEntry
         lastUpdatedTime = Seconds(0);
         lastProbeTime = Seconds(0);
         baseLatency = m_baseLatency+((length-2)*(PACKET_SIZE*8)/(PORT_RATE)+2*(PACKET_SIZE*8)/(HOST_PORT_RATE))*5; // 假设每跳基本时延为10ns，实际时延需要通过探测更新
-        realLatency = m_baseLatency+(length-2)*(PACKET_SIZE*8)/(PORT_RATE)+2*(PACKET_SIZE*8)/(HOST_PORT_RATE);
+        noQueueLatencyNs = m_baseLatency+(length-2)*(PACKET_SIZE*8)/(PORT_RATE)+2*(PACKET_SIZE*8)/(HOST_PORT_RATE);
     }
     
 
     void Print(std::ostream& os) const
     {
-        os << "PathID:" << pathId << ", length:" << length << ", reversePathID:" << reversePathId << ", baseLatency:" << baseLatency << ", realLatency:" << realLatency << ", nodes:" << VectorToString(nodes) << ", ports:" << VectorToString(ports);
+        os << "PathID:" << pathId << ", length:" << length << ", reversePathID:" << reversePathId << ", baseLatency:" << baseLatency << ", noQueueLatency:" << noQueueLatencyNs << ", nodes:" << VectorToString(nodes) << ", ports:" << VectorToString(ports);
     }
     std::string ToString() const
     {
-        return "[PathID:" + std::to_string(pathId) + ", length:" + std::to_string(length) + ", reversePathID:" + std::to_string(reversePathId) + ", baseLatency:" + std::to_string(baseLatency) + ", realLatency:" + std::to_string(realLatency) + ", nodes:" + VectorToString(nodes) + ", ports:" + VectorToString(ports) + "]";
+        return "[PathID:" + std::to_string(pathId) + ", length:" + std::to_string(length) + ", reversePathID:" + std::to_string(reversePathId) + ", baseLatency:" + std::to_string(baseLatency) + ", noQueueLatency:" + std::to_string(noQueueLatencyNs) + ", nodes:" + VectorToString(nodes) + ", ports:" + VectorToString(ports) + "]";
     }
 };
 

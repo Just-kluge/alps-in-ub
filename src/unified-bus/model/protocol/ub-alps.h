@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: GPL-2.0-only
 #ifndef UB_ALPS_H
 #define UB_ALPS_H
+#include <map>
+#include <string>
 #include <unordered_map>
 #include <vector>
 #include <time.h>
@@ -60,7 +62,7 @@ public:
 
     // 获取剩余窗口，ALPS LDCP需要
     uint32_t GetRestCwnd() override;
-
+     
     // 发送端生成拥塞控制算法需要的header
     UbNetworkHeader SenderGenNetworkHeader() override;
 
@@ -77,8 +79,16 @@ public:
     void SenderRecvAck(uint32_t psn, UbCongestionExtTph header) override;
    
     void UpdateNextSendTime(uint32_t pktsize,uint32_t port);
-
+     DataRate GetRate() { return m_currentRate; }
+     
     Time GetNextSendTime();
+    void UpdateLastVisitTime(Time time, string reason){
+        m_LastVisitTime = time;
+        m_lastVisitReason = reason;
+    }
+    void UpdateNextSendTimeForRateAdjustment(uint32_t RemaintransmissionDelayinNs);
+    Time GetLastVisitTime() { return m_LastVisitTime; }
+    string GetLastVisitReason() { return m_lastVisitReason; }
 private:
     void StateReset();
     void InitRateControlState();
@@ -116,12 +126,10 @@ private:
 
     bool m_rateLimitEnabled = true;     // 是否启用速率限制
     Time m_nextSendTime = Seconds(0);   // 下次允许发送时间
+    Time m_LastVisitTime = Seconds(0);   //最后一次访问时间
+    string m_lastVisitReason = "";
 
-
-
-    EventId m_congestionStateResetEvent{};
-
- 
+    EventId m_nextSendTimerEvent{};     // 下次发送定时器事件 ID
 };
 
 /**

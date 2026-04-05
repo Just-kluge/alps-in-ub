@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: GPL-2.0-only
 #include "ub-utils.h"
 #include "ns3/ub-alps.h"
+#include "monitor/ub-monitor.h"
 #include <filesystem>
+#include <algorithm>
 
 using namespace std;
 using namespace ns3;
@@ -905,6 +907,7 @@ void UbUtils::SetRecord(int fieldCount, string field, TrafficRecord &record)
 vector<TrafficRecord> UbUtils::ReadTrafficCSV(const string &filename)
 {
     vector<TrafficRecord> records;
+    UbAlpsPacketTracker::ResetGlobalFlowTypeStats();
     ifstream file(filename);
     if (!file.is_open()) {
         NS_ASSERT_MSG(0, "Can not open File: " << filename);
@@ -927,10 +930,63 @@ vector<TrafficRecord> UbUtils::ReadTrafficCSV(const string &filename)
             SetRecord(fieldCount, field, record);
             fieldCount++;
         }
+        if (record.opType == "URMA_WRITE") {
+            UbAlpsPacketTracker::RecordPlannedFlow(record.sourceNode, record.destNode);
+        }
         UbTrafficGen::Get()->SetPhaseDepend(record.phaseId, record.taskId);
         records.push_back(record);
     }
     file.close();
+
+    const auto& nodeCounters = UbAlpsPacketTracker::GetAllNodeFlowTypeCounters();
+    if (!nodeCounters.empty()) {
+        std::vector<uint32_t> nodes;
+        nodes.reserve(nodeCounters.size());
+        for (const auto& kv : nodeCounters) {
+            nodes.push_back(kv.first);
+        }
+        std::sort(nodes.begin(), nodes.end());
+
+        NS_LOG_UNCOND("[ALPS_INIT_CHECK] per-node flow type counts and initial rates:");
+        for (uint32_t nodeId : nodes) {
+            DataRate maxRate(400000000000ULL);
+            if (nodeId < NodeList::GetNNodes()) {
+                Ptr<Node> node = NodeList::GetNode(nodeId);
+                if (node && node->GetNDevices() > 0) {
+                    Ptr<UbPort> hostPort = DynamicCast<UbPort>(node->GetDevice(0));
+                    if (hostPort) {
+                        maxRate = hostPort->GetDataRate();
+                    }
+                }
+            }
+           // const auto counters = UbAlpsPacketTracker::GetNodeFlowTypeCounters(nodeId);
+            // const DataRate sameColRate = UbHostAlps::EstimateInitialRateByType(
+            //     nodeId,
+            //     UbHostAlps::FlowType::SAME_COL,
+            //     maxRate);
+            // const DataRate sameRackCrossColRate = UbHostAlps::EstimateInitialRateByType(
+            //     nodeId,
+            //     UbHostAlps::FlowType::SAME_RACK_CROSS_COL,
+            //     maxRate);
+            // const DataRate crossRackRate = UbHostAlps::EstimateInitialRateByType(
+            //     nodeId,
+            //     UbHostAlps::FlowType::CROSS_RACK,
+            //     maxRate);
+
+            // NS_LOG_UNCOND(
+            //     "[ALPS_INIT_CHECK] node=" << nodeId
+            //     << " same_col(count=" << counters.sameCol << ", initRateGbps="
+            //     << static_cast<double>(sameColRate.GetBitRate()) / 1e9
+            //     << ") same_rack_cross_col(count=" << counters.sameRackCrossCol
+            //     << ", initRateGbps="
+            //     << static_cast<double>(sameRackCrossColRate.GetBitRate()) / 1e9
+            //     << ") cross_rack(count=" << counters.crossRack
+            //     << ", initRateGbps="
+            //     << static_cast<double>(crossRackRate.GetBitRate()) / 1e9
+            //     << ") maxRateGbps=" << static_cast<double>(maxRate.GetBitRate()) / 1e9);
+        }
+    }
+
     return records;
 }
 

@@ -147,6 +147,7 @@ public:
     Ptr<UbTransportChannel> GetTpByTpn(uint32_t tpn);
 
     std::map<uint32_t, Ptr<UbTransportChannel>> GetTpnMap() const;
+    bool DumpUnfinishedTpReport(const std::string& filePath) const;
 
     void SetTpConnManager(Ptr<TpConnectionManager> conn)
     {

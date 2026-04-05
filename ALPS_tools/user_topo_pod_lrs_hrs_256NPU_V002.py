@@ -68,18 +68,29 @@ BASE_BW_GBPS = 400
 # Link delay macros
 # =========================
 
+# DELAY_HOST_TOR = "1ns"
+# DELAY_TOR_TOR = "1ns"
+# DELAY_TOR_DU = "5ns"
+# DELAY_DU_L1 = "1ns"
+# DELAY_DU_HRS = "250ns"
+
+# FWD_DELAY_HOST = "1ns"
+# FWD_DELAY_TOR = "100ns"
+# FWD_DELAY_DU = "100ns"
+# FWD_DELAY_L1 = "100ns"
+# FWD_DELAY_HRS = "500ns"
+
 DELAY_HOST_TOR = "1ns"
-DELAY_TOR_TOR = "1ns"
-DELAY_TOR_DU = "5ns"
-DELAY_DU_L1 = "1ns"
-DELAY_DU_HRS = "250ns"
+DELAY_TOR_TOR = "101ns"
+DELAY_TOR_DU = "105ns"
+DELAY_DU_L1 = "101ns"
+DELAY_DU_HRS = "550ns"
 
-FWD_DELAY_HOST = "1ns"
-FWD_DELAY_TOR = "100ns"
-FWD_DELAY_DU = "100ns"
-FWD_DELAY_L1 = "100ns"
-FWD_DELAY_HRS = "500ns"
-
+FWD_DELAY_HOST = "0ns"
+FWD_DELAY_TOR = "0ns"
+FWD_DELAY_DU = "0ns"
+FWD_DELAY_L1 = "0ns"
+FWD_DELAY_HRS = "0ns"
 # =========================
 # Bandwidth macros
 # =========================
@@ -112,7 +123,7 @@ BW_DU_HRS = BW_BASE
 # =========================
 
 #OUTPUT_DIR = "./output/pod_lrs_hrs_v002"
-OUTPUT_DIR = "/app/ns-3-ub/scratch/tp_UB_Mesh_V0001" # 3月25号下午，jyxiao改
+OUTPUT_DIR = "/app/ns-3-ub/scratch/tp_UB_Mesh_V0002" # 4月1号下午，jyxiao改
 
 PRIORITY_LIST = [7]
 

@@ -44,8 +44,10 @@ build_lib(
 	model/ub-queue-manager.cc
 	model/ub-fault.cc
 	model/ub-alps-tag.cc
+	model/protocol/ub-alps-pst.cc
 	model/protocol/random_generator.cc
 	model/ub-tp-connection-manager.cc
+	model/monitor/ub-monitor.cc
   HEADER_FILES
     ${mpi_headers}
 	model/ub-traffic-gen.h
@@ -78,6 +80,7 @@ build_lib(
 	model/ub-alps-tag.h
 	model/protocol/random_generator.h
 	model/ub-fault.h
+	model/monitor/ub-monitor.h
   LIBRARIES_TO_LINK ${libnetwork}
                     ${libinternet}
                     ${libpoint-to-point}

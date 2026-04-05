@@ -9,7 +9,8 @@
 #include "ns3/ub-switch.h"
 #include "ns3/ub-controller.h"
 #include "ns3/ub-alps-tag.h"
-
+#include "ns3/ub-alps.h"
+#include "monitor/ub-monitor.h"
 
 namespace ns3 {
 NS_OBJECT_ENSURE_REGISTERED(UbSwitch);
@@ -544,26 +545,25 @@ void UbSwitch::ForwardDataPacketAlps(Ptr<UbPort> port, Ptr<Packet> packet, const
         //获取ACK对应数据包转发路径pid,然后获取数据包发出端口。
         uint32_t Packet_pid =UbRoutingProcess::GetReservePid(alpsTag.GetPathId());
         uint32_t Packet_outPort = m_routingProcess->GetOutPort(Packet_pid);
+       
+       
+       
+       
         uint64_t  queueingDelayNanoSeconds =  CalculatePacketQueueDelay(Packet_outPort);
-        //获取·ACK转发时延
-         Ptr<Node> node = GetObject<Node>();
-         Ptr<UbSwitch> ubSwitch = node->GetObject<UbSwitch>();
-         Ptr<UbPort> outPortDevice = DynamicCast<UbPort>(node->GetDevice(Packet_outPort));
-          DataRate portRate = outPortDevice->GetDataRate();
-          uint64_t  ackDelayNanoSeconds =  static_cast<double>((ACK_SIZE )* 8) / (portRate.GetBitRate()/1e9);
-          
-        Time originalTime = alpsTag.GetTimeStamp();
-        Time queueingDelay = NanoSeconds(queueingDelayNanoSeconds-ackDelayNanoSeconds); // 从总排队+转发时延中减去ACK转发时延，得到数据包的排队时延
+        // static uint32_t a = 0;
+        // uint64_t  queueingDelayNanoSeconds =a;
+        // std::cout << "交换机NodeId:" << GetObject<Node>()->GetId() << ":"<<"Packet_outPort:"<<Packet_outPort<<" a:"<<a++<<std::endl;
+        
+        
 
-        Time newTime = originalTime - queueingDelay;
-        alpsTag.SetTimeStamp(newTime);
+        alpsTag.AppendQueueingDelayNanoSeconds(static_cast<uint32_t>(queueingDelayNanoSeconds));
         packet->ReplacePacketTag(alpsTag); // 更新ALPS Tag
 
     }
     else{
         if(true){
              //2026.3.21  看看rack1 layer1的交换机256输入端口0 1 2 3和257的输入端口4 5 6 7收到的数据包数量，看看ACK包和数据包的数量关系。
-           record_packet_num( inPort);
+           //record_packet_num( inPort);
        // std::cout << "交换机NodeId:" << GetObject<Node>()->GetId() << "将数据包转发，从端口："<<outPort<<std::endl;
           
     }
@@ -574,8 +574,14 @@ void UbSwitch::ForwardDataPacketAlps(Ptr<UbPort> port, Ptr<Packet> packet, const
     uint32_t pSize = packet->GetSize();
 
     if (!m_queueManager->CheckInPortSpace(inPort, priority, pSize)) {
+        const uint32_t srcNode = utils::IpToNodeId(headers.ipv4Header.GetSource());
+        const uint32_t dstNode = utils::IpToNodeId(headers.ipv4Header.GetDestination());
+        const uint32_t pathLength = static_cast<uint32_t>(alpsTag.GetPathLength());
+        UbAlpsPacketTracker::RecordAlpsPacketDrop(srcNode, dstNode, alpsTag.GetHopCount(), pathLength);
+        //std::cout << "交换机NodeId:" << GetObject<Node>()->GetId() << ":"<<" hop:"<<static_cast<int>(alpsTag.GetHopCount())<<std::endl;
         NS_LOG_WARN("NodeId " << GetObject<Node>()->GetId() << " InPort " << inPort << " pri=" << (uint32_t)priority
                     << " buffer full. Packet Dropped!2");
+        UbAlpsPacketTracker::IncrementSwitchDroppedPackets();
         UbTransportChannel::s_totalSwitchDropedPkts++;
         return;
     }
@@ -630,7 +636,7 @@ uint64_t UbSwitch::CalculatePacketQueueDelay(uint32_t packet_outPort){
             DataRate portRate = outPortDevice->GetDataRate();
             
             // 5. 总排队时延
-            double queueingDelayNanoSeconds = static_cast<double>((totalQueueBytes+PACKET_SIZE )* 8) / (portRate.GetBitRate()/1e9);
+            double queueingDelayNanoSeconds = static_cast<double>((totalQueueBytes)* 8) / (portRate.GetBitRate()/1e9);
             Time queueingDelay = NanoSeconds(queueingDelayNanoSeconds);
             
             // 6. 详细输出

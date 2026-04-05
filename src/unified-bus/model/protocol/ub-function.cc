@@ -1,9 +1,13 @@
 // SPDX-License-Identifier: GPL-2.0-only
+#include <fstream>
+#include <sstream>
+
 #include "ns3/log.h"
 #include "ns3/simulator.h"
 
 #include "ns3/ub-datatype.h"
 #include "ns3/ub-controller.h"
+#include "ns3/ub-monitor.h"
 #include "ns3/ub-transaction.h"
 #include "ns3/ub-function.h"
 
@@ -100,6 +104,45 @@ void UbFunction::DestroyJetty(uint32_t jettyNum)
     }
 }
 
+bool UbFunction::DumpUnfinishedJettyReport(const std::string& filePath) const
+{
+    std::ofstream out(filePath.c_str(), std::ios::out | std::ios::app);
+    if (!out.is_open()) {
+        NS_LOG_WARN("Failed to open jetty monitor log: " << filePath);
+        return false;
+    }
+
+    uint32_t unfinishedCount = 0;
+    for (const auto& item : m_numToJetty) {
+        const Ptr<UbJetty>& jetty = item.second;
+        if (!jetty || !jetty->HasPendingWqe()) {
+            continue;
+        }
+        unfinishedCount++;
+    }
+
+    if (unfinishedCount == 0) {
+        return false;
+    }
+
+    out << "================================================================================\n";
+    out << "[JettyMonitor] nodeId=" << m_nodeId << " timeUs=" << Simulator::Now().GetMicroSeconds()
+        << " unfinishedJettyCount=" << unfinishedCount << " totalJettyCount=" << m_numToJetty.size() << "\n";
+
+    for (const auto& item : m_numToJetty) {
+        const Ptr<UbJetty>& jetty = item.second;
+        if (!jetty || !jetty->HasPendingWqe()) {
+            continue;
+        }
+
+        jetty->WriteUnfinishedReport(out);
+        out << "--------------------------------------------------------------------------------\n";
+    }
+
+    out << "================================================================================\n";
+    return true;
+}
+
 Ptr<UbWqe> UbFunction::CreateWqe(uint32_t src, uint32_t dest, uint32_t size, uint32_t wqeId)
 {
     NS_LOG_DEBUG(this);
@@ -116,7 +159,7 @@ void UbFunction::PushWqeToJetty(Ptr<UbWqe> wqe, uint32_t jettyNum)
 {
     NS_LOG_DEBUG(this);
     Ptr<UbJetty> ubJetty = GetJetty(jettyNum);
-    if (ubJetty == nullptr) {
+    if (!ubJetty) {
         NS_LOG_WARN("Get jetty failed");
         return;
     }
@@ -164,6 +207,11 @@ UbJetty::UbJetty()
 {
 }
 
+bool UbJetty::HasPendingWqe() const
+{
+    return !m_wqeVector.empty();
+}
+
 void UbJetty::Init()
 {
     ResetSsnAckBitset(m_oooAckThreshold);
@@ -172,6 +220,48 @@ void UbJetty::Init()
 void UbJetty::SetClientCallback(Callback<void, uint32_t, uint32_t> cb)
 {
     FinishCallback = cb;
+}
+
+void UbJetty::WriteUnfinishedReport(std::ostream& os) const
+{
+    os << "JettyNum=" << m_jettyNum << " nodeId=" << m_nodeId << " src=" << m_src << " dest=" << m_dest
+       << " pendingWqeCount=" << m_wqeVector.size() << "\n";
+    os << "  SSN: m_taMsnCnt=" << m_taMsnCnt << " m_taSsnCnt=" << m_taSsnCnt
+       << " m_taSsnSndNxt=" << m_taSsnSndNxt << " m_taSsnSndUna=" << m_taSsnSndUna << "\n";
+
+    const uint32_t generatedNotScheduled = (m_taSsnCnt >= m_taSsnSndNxt) ? (m_taSsnCnt - m_taSsnSndNxt) : 0;
+    const uint32_t inflightUnacked = (m_taSsnSndNxt >= m_taSsnSndUna) ? (m_taSsnSndNxt - m_taSsnSndUna) : 0;
+    os << "  Derived: generatedNotScheduled=" << generatedNotScheduled
+       << " inflightUnacked=" << inflightUnacked << " acknowledged=" << m_taSsnSndUna << "\n";
+
+    if (generatedNotScheduled > 0) {
+        os << "  StallHint=DISPATCH_PENDING\n";
+    } else if (inflightUnacked > 0) {
+        os << "  StallHint=ACK_PENDING\n";
+    } else {
+        os << "  StallHint=UNKNOWN\n";
+    }
+
+    os << "  UnfinishedWqeList:\n";
+    for (size_t i = 0; i < m_wqeVector.size(); ++i) {
+        const Ptr<UbWqe>& wqe = m_wqeVector[i];
+        if (!wqe) {
+            os << "    WQE[" << i << "]: null\n";
+            continue;
+        }
+
+        const uint64_t totalSize = wqe->GetSize();
+        const uint64_t bytesLeft = wqe->GetBytesLeft();
+        const uint64_t bytesSent = (totalSize >= bytesLeft) ? (totalSize - bytesLeft) : 0;
+        const uint64_t ssnStart = wqe->GetTaSsnStart();
+        const uint64_t ssnEnd = ssnStart + wqe->GetTaSsnSize() - 1;
+
+        os << "    WQE[" << i << "]: taskId=" << wqe->GetWqeId() << " msn=" << wqe->GetTaMsn()
+           << " ssnRange=[" << ssnStart << "~" << ssnEnd << "]"
+           << " size=" << totalSize << " bytesSent=" << bytesSent << " bytesLeft=" << bytesLeft
+           << " canSend=" << (wqe->CanSend() ? "true" : "false")
+           << " sentCompleted=" << (wqe->IsSentCompleted() ? "true" : "false") << "\n";
+    }
 }
 
 
@@ -406,8 +496,8 @@ void UbJetty::CheckAndRemoveCompletedWqe()
     // 检查并移除已完成的WQE
     for (auto it = m_wqeVector.begin(); it != m_wqeVector.end();) {
         Ptr<UbWqe> wqe = *it;
-        uint32_t wqeId = wqe->GetWqeId();
         if (wqe && IsWqeCompleted(wqe)) {
+            uint32_t wqeId = wqe->GetWqeId();
             NS_LOG_INFO("WQE Finishes, jettyNum: {" << m_jettyNum  << "} taskId:{ " << std::to_string(wqeId) <<"}");
             auto ubTa = GetTransaction();
             ubTa->WqeFinish(m_jettyNum, *it);

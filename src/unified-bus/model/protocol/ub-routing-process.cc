@@ -399,7 +399,7 @@ void UbRoutingProcess::PrintAlpsRoute() const
     }
 }
 uint32_t UbRoutingProcess::GetPidOnHostForPacketSpraying( AlpsPstEntry* pstEntry){
-    
+    //std::cout<<"负载均衡"<<std::endl;
     uint32_t pitsize=pstEntry->PitEntries.size();     
     std::vector<double> weights;
     weights.resize(pitsize);
@@ -417,8 +417,9 @@ uint32_t UbRoutingProcess::GetPidOnHostForPacketSpraying( AlpsPstEntry* pstEntry
     //计算权重
     for (auto pitEntry : pstEntry->PitEntries)
      {
-    
-        double ratio = -1.0 * pitEntry->GetRealLatency()/maxBaselatency ;
+        // ALPS路径实时延迟按“无排队时延 + 端口映射里的最新排队时延”现算。
+        const double realtimeLatency = static_cast<double>(pitEntry->GetRealTimeLatency(this)); // 这里GetRealTimeLatency会动态计算当前路径的实时时延，包含无排队时延和最新的排队时延。
+        double ratio = -1.0 * realtimeLatency / maxBaselatency;
         weights[i] = std::exp(ratio);
         sum_weights += weights[i]; 
         //std::cout<<"weights["<<i<<"]:"<<weights[i]<<std::endl;
@@ -432,7 +433,7 @@ uint32_t UbRoutingProcess::GetPidOnHostForPacketSpraying( AlpsPstEntry* pstEntry
      //归一化
      for(uint32_t j=0;j<pitsize;j++){
         weights[j] /= sum_weights;
-       // std::cout<<"weights["<<j<<"]:"<<weights[j]<<std::endl;
+        //std::cout<<"weights["<<j<<"]:"<<weights[j]<<std::endl;
      }
      //根据权重选择路径
         // 使用 ns-3 的均匀分布随机变量，目前是替代方案，需要修改成我们的随机数生成代码
@@ -445,7 +446,7 @@ uint32_t UbRoutingProcess::GetPidOnHostForPacketSpraying( AlpsPstEntry* pstEntry
      * 
      */
     const double random_value = GenerateRandomDouble();
-     //std::cout<<"random_value:"<<random_value<<std::endl<<std::endl;
+    // std::cout<<"random_value:"<<random_value<<std::endl<<std::endl;
      
     double cumulative_weight = 0.0;
     for (size_t k = 0; k < weights.size(); ++k) 
@@ -474,17 +475,35 @@ uint32_t UbRoutingProcess::GetPidOnHostForPacketSpraying( AlpsPstEntry* pstEntry
                 exit(1) ;
             }
     }
+    uint64_t UbRoutingProcess::MakeNodePortKey(uint32_t nodeId, uint32_t outPort)
+    {
+        return (static_cast<uint64_t>(nodeId) << 32) | static_cast<uint64_t>(outPort);
+    }
+
+    void UbRoutingProcess::UpdateNodePortQueueDelay(uint32_t nodeId, uint32_t outPort, uint32_t delayNs)
+    {
+        m_NodePortQueueDelayNs[MakeNodePortKey(nodeId, outPort)] = delayNs;
+    }
+
+    uint32_t UbRoutingProcess::GetNodePortQueueDelay(uint32_t nodeId, uint32_t outPort)
+    {
+        auto it = m_NodePortQueueDelayNs.find(MakeNodePortKey(nodeId, outPort));
+        if (it == m_NodePortQueueDelayNs.end()) {
+            return 0;
+        }
+        return it->second;
+    }
    uint64_t UbRoutingProcess::GetPathRealDelay(uint32_t packet_pid,uint32_t m_src,uint32_t m_dst){
         auto pstKey = HashPstKey(m_src,m_dst);
         AlpsPstEntry* pstEntry = GetPstEntry( pstKey);
         for (const auto& entry : pstEntry->PitEntries) {
             if (entry->GetPathId() == packet_pid) {
-                 uint64_t realLatency = 21;
+                 uint64_t realLatency = entry->GetNoQueueLatency();//（无排队时延）
                 for(uint32_t i=1;i<entry->GetPorts().size();i++){
                     uint16_t outPort = entry->GetPorts()[i];
                     auto node = NodeList::GetNode(entry->GetNodes()[i]);
                     auto ubswitch = node->GetObject<UbSwitch>();
-                    realLatency +=ubswitch->CalculatePacketQueueDelay(outPort)+21; // 21ns是传输时延，CalculatePacketQueueDelay(outPort)是排队时延，这里假设每条链路的传输时延都是20ns，实际可以根据链路长度和速率计算得到。
+                    realLatency +=ubswitch->CalculatePacketQueueDelay(outPort); // 21ns是传输时延，CalculatePacketQueueDelay(outPort)是排队时延，这里假设每条链路的传输时延都是20ns，实际可以根据链路长度和速率计算得到。
                 }
 
 
@@ -541,7 +560,7 @@ void UbRoutingProcess::HandleAlpsAckByPsn(uint32_t pid, uint32_t srcTpn, uint32_
 
     SetTimeoutForLapsbypid(pid,srcTpn);
 
-    // 关键修复：使用 ScheduleNow 确保在下一个仿真时刻触发，避免当前上下文冲突
+    // 关键修复
     if(!m_retransBuffer[srcTpn].empty()){
          Ptr<UbPort> port = DynamicCast<UbPort>(NodeList::GetNode(m_nodeId)->GetDevice(m_sport));
         // Deleted:port->TriggerTransmit();
@@ -612,7 +631,7 @@ NS_LOG_INFO("Set a new timeout event for pid " << pid << " at " << Simulator::No
 
 }
 void UbRoutingProcess::HandleTimeoutForLapsbypid(uint32_t pid, uint32_t srcTpn){
-  // std::cout<<"Node"<<m_nodeId<<" 超时事件触发"<<std::endl;
+   std::cout<<"Node"<<m_nodeId<<" 超时事件触发"<<std::endl;
     auto it = m_pendingByPid.find(pid);
     if (it == m_pendingByPid.end()) {
         return;

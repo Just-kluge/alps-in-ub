@@ -2,10 +2,11 @@
 #include "ns3/ub-switch-allocator.h"
 #include "ns3/ub-switch.h"
 #include "ns3/ub-port.h"
+#include "monitor/ub-monitor.h"
 #include "protocol/ub-routing-process.h"
 #include "protocol/ub-transport.h"
 #include "ub-queue-manager.h"
-
+#include "ns3/ub-alps.h"
 namespace ns3 {
 
 NS_OBJECT_ENSURE_REGISTERED(UbSwitchAllocator);
@@ -40,7 +41,8 @@ void UbSwitchAllocator::DoDispose()
 }
 
 void UbSwitchAllocator::TriggerAllocator(Ptr<UbPort> outPort)
-{
+{ // std::cout<<"TriggerAllocator: nodeid:"<<m_nodeId<<" outPortId="<<outPort->GetIfIndex()<<" time:"<<Simulator::Now().GetNanoSeconds()<<std::endl;
+
     std::string typeName = GetInstanceTypeId().GetName();
     NS_LOG_DEBUG("[" << typeName << " TriggerAllocator] portId: " << outPort->GetIfIndex());
 
@@ -62,6 +64,9 @@ void UbSwitchAllocator::TriggerAllocator(Ptr<UbPort> outPort)
         return;
     }
     m_isRunning[outPortId] = true;
+    if(m_nodeId == 0){
+     //std::cout << "m_allocationTime:" << m_allocationTime.GetNanoSeconds() << std::endl;
+    }
     Simulator::Schedule(m_allocationTime, &UbSwitchAllocator::AllocateNextPacket, this, outPort);
 }
 
@@ -254,6 +259,7 @@ Ptr<UbIngressQueue> UbRoundRobinAllocator::SelectNextIngressQueue(Ptr<UbPort> ou
               }
         }
     }
+
     return nullptr;
 }
 
@@ -275,6 +281,7 @@ Ptr<UbIngressQueue> UbRoundRobinAllocator::SelectNextIngressQueueForALPS(Ptr<UbP
         
         size_t qSize = m_ingressSources[outPortId][pi].size();
        // std::cout<<"pi;"<<pi<<" qSize: "<<qSize<<std::endl;
+  
         for (idx = 0; idx < qSize; idx++) {
             auto qidx = (idx + m_rrIdx[outPortId][pi]) % qSize; // 在我们的场景中，我们认为所有的queue都在同一个VL下
             auto ingressQueue = m_ingressSources[outPortId][pi][qidx];
@@ -294,28 +301,57 @@ Ptr<UbIngressQueue> UbRoundRobinAllocator::SelectNextIngressQueueForALPS(Ptr<UbP
                 
             }
             bool rateReady = true;
-            auto congestionCtrl = ingressQueue->GetCongestcontrol();
+            auto congestionCtrl = DynamicCast<UbHostAlps>(ingressQueue->GetCongestcontrol());
             if (congestionCtrl)
             {
                 rateReady = congestionCtrl->GetNextSendTime() <= Simulator::Now();
             }
 
-            if (!ingressQueue->IsEmpty() &&
-                !ingressQueue->IsLimited() &&
-                !outPort->GetFlowControl()->IsFcLimited(ingressQueue) &&
-                rateReady)
+            if (ingressQueue->IsEmpty())
+            {   if (congestionCtrl){
+                    congestionCtrl->UpdateLastVisitTime(Simulator::Now(), "skip_empty");
+
+            }
+                continue;
+            }
+           
+       
+            const bool isLimited = ingressQueue->IsLimited();
+            const bool isFcLimited = outPort->GetFlowControl()->IsFcLimited(ingressQueue);
+            const bool selected = !isLimited && !isFcLimited && rateReady;
+
+
+            if (selected)
             {
                 m_rrIdx[outPortId][pi] = (qidx + 1) % qSize;
+                if (congestionCtrl){
+                    congestionCtrl->UpdateLastVisitTime(Simulator::Now(), "selected");
+
+                }
                 NS_LOG_DEBUG("[UbSwitchAllocator DispatchPacket] " << " NodeId: " << node->GetId()
                 << " PortId: " << outPortId <<" qidx: "<< qidx);
                 return ingressQueue;
             }
-            else{
-                if(m_nodeId==0){
-                      //std::cout<<"Node"<<m_nodeId<<" qidx: "<<qidx<<" IsEmpty: "<<!m_ingressSources[outPortId][pi][qidx]->IsEmpty()<<" IsLimited: "<<!m_ingressSources[outPortId][pi][qidx]->IsLimited()<<" IsFcLimited: "<<!outPort->GetFlowControl()->IsFcLimited(m_ingressSources[outPortId][pi][qidx])<<std::endl;
-            
-                }
-              }
+            std::string reason;
+            if (isLimited)
+            {
+                reason = "skip_ingress_limited";
+            }
+            else if (isFcLimited)
+            {
+                reason = "skip_pfc_limited";
+            }
+            else if (!rateReady)
+            {
+                reason = "skip_rate_not_ready";
+            }
+            else
+            {
+                reason = "skip_unknown";
+            }
+            if (congestionCtrl){
+                congestionCtrl->UpdateLastVisitTime(Simulator::Now(), reason);
+            }
         }
     }
     return nullptr;

@@ -3,6 +3,7 @@
 #define UB_TRANSPORT_H
 
 #include <queue>
+#include <string>
 #include "ns3/object.h"
 #include "ns3/packet.h"
 #include "ns3/ipv4-address.h"
@@ -243,6 +244,7 @@ public:
     }
 
     uint32_t GetWqeSegmentVecSize() { return m_wqeSegmentVector.size(); }
+    std::string GetWqeQueueSnapshot(uint32_t maxItems = 4) const;
     void AddAplsTagForDatapacketOnHost(Ptr<Packet> p);
     void AddAplsTagForRetransPacketOnHost(Ptr<Packet> ,uint32_t psn);
     void AddAplsTagForACKOnHost(Ptr<Packet> ackp, uint32_t pathid, uint32_t ackPsn);
@@ -319,6 +321,7 @@ private:
     uint64_t m_defaultMaxInflightPacketSize;
     bool m_usePacketSpray;
     bool m_useShortestPaths;
+    bool m_alpsAckForceTrigger = false;
     uint16_t m_lbHashSalt = 0; // load balance salt for ECMP/packet-spray hashing, increases per packet
 
     bool m_isRetransEnable;

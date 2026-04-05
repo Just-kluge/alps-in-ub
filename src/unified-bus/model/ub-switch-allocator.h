@@ -37,7 +37,7 @@ public:
     bool GetEgressStatus(uint32_t portId);
     void DoDispose() override;
     void CheckDeadlock();
-
+    bool GetisRunning(uint32_t idx) { return m_isRunning[idx]; }
 protected:
     Time m_allocationTime;
     uint32_t m_nodeId;

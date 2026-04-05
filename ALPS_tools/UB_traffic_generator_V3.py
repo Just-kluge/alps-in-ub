@@ -3,6 +3,10 @@
 """
 MoE Traffic Generator for ns-3-ub
 生成 dispatch 和 combine 两个阶段的流量配置
+不再合并多个流，而是分开记录流
+
+
+
 """
 
 import numpy as np
@@ -10,6 +14,7 @@ import random
 from collections import defaultdict
 from dataclasses import dataclass
 from typing import List, Tuple, Dict
+import os
 
 # ==================== 配置参数 ====================
 NUM_NODES = 256           # 节点总数
@@ -19,7 +24,7 @@ DISPATCH_SIZE = 7 * 1024  # Dispatch 数据量 (7KB)
 COMBINE_SIZE = 14 * 1024  # Combine 数据量 (14KB)
 PRIORITY = 7              # 任务优先级
 PACKET_SIZE = 4096        # 每个数据包大小 (4KB)
-
+WRITE_COMBINE_TO_CSV = False  # 是否将 Combine 阶段写入 CSV 文件（用于只测试 Dispatch 阶段）
 # 与 build_ub_mesh_pst_pit_wy_V2.py 保持一致的主机坐标参数
 POD_NUM = 1
 RACK_NUM = 4
@@ -85,49 +90,6 @@ def print_flow_type_ratio(title: str, counter: Dict[str, int], total: int) -> No
         print(f"  {labels[key]}: count={count}, ratio={ratio:.6f}")
 
 # # ==================== 解析概率数据 ====================
-# def parse_probability_data(data_str: str) -> np.ndarray:
-#     """
-#     解析概率字符串并转换为行优先顺序
-    
-#     Args:
-#         data_str: 包含 256 个数字的字符串
-        
-#     Returns:
-#         归一化后的概率数组 (行优先顺序)
-#     """
-#     # 解析为数组
-#     data = np.array([float(x) for x in data_str.strip().split()])
-    
-#     if len(data) != 256:
-#         raise ValueError(f"需要 256 个概率值，实际得到 {len(data)} 个")
-    
-#     # 将 256 个值 reshape 为 4 个 8x8 矩阵（列优先）
-#     # 原始数据是按列优先排列的：先第一列的 8 个，再第二列的 8 个...
-#     matrices_col_major = []
-#     idx = 0
-#     for m in range(4):
-#         matrix = np.zeros((8, 8))
-#         for col in range(8):
-#             for row in range(8):
-#                 matrix[row, col] = data[idx]
-#                 idx += 1
-#         matrices_col_major.append(matrix)
-    
-#     # 转换为行优先顺序
-#     # 节点编号：第 0 行是 0-7, 第 1 行是 8-15, ...
-#     probability_row_major = []
-#     for m in range(4):
-#         matrix = matrices_col_major[m]
-#         for row in range(8):
-#             for col in range(8):
-#                 probability_row_major.append(matrix[row, col])
-    
-#     probability = np.array(probability_row_major)
-    
-#     # 归一化
-#     probability = probability / probability.sum()
-    
-#     return probability
 def parse_probability_data(data_str: str) -> np.ndarray:
     # 解析为数组
     data = np.array([float(x) for x in data_str.strip().split()])
@@ -187,141 +149,106 @@ def generate_traffic_records(probability: np.ndarray) -> List[Dict]:
     Returns:
         流量记录列表，每条记录包含 taskId, sourceNode, destNode 等信息
     """
-    # 用于合并相同源目的节点的流量
-    # key: (src, dst), value: {'dispatch_count': count, 'combine_count': count}
-    flow_stats = defaultdict(lambda: {'dispatch_count': 0, 'combine_count': 0})
-    count =defaultdict(lambda:0)
-    raw_flow_type_counter = defaultdict(int)
+    print("\n" + "="*80)
     print("正在生成流量记录...")
-    print(f"总节点数：{NUM_NODES}")
-    print(f"每个节点 token 数：{TOKENS_PER_NODE}")
-    print(f"每个 token 选择专家数：{TOP_K}")
-    print(f"预计总流量记录数：约 {NUM_NODES * TOKENS_PER_NODE * TOP_K * 2} 条（合并前）")
+    print("="*80)
+    print(f"配置参数:")
+    print(f"  总节点数：{NUM_NODES}")
+    print(f"  每个节点 token 数：{TOKENS_PER_NODE}")
+    print(f"  每个 token 选择专家数：{TOP_K}")
+    print(f"  Dispatch 数据量：{DISPATCH_SIZE / 1024:.0f} KB")
+    print(f"  Combine 数据量：{COMBINE_SIZE / 1024:.0f} KB")
+    print(f"  数据包大小：{PACKET_SIZE} B")
     
-    # 遍历每个节点
-    for src_node in range(NUM_NODES):
-        if src_node % 32 == 0:
-            print(f"处理节点 {src_node}/{NUM_NODES}...")
-        
-        # 为每个 token 选择专家
-        for token_idx in range(TOKENS_PER_NODE):
-            # 选择 expert 节点
-            expert_nodes = select_expert_nodes(src_node, probability, TOP_K)
-            
-            # 统计流量
-            for dst_node in expert_nodes:
-                flow_stats[(src_node, dst_node)]['dispatch_count'] += 1
-                count[dst_node] += 1
-                flow_stats[(src_node,dst_node )]['combine_count'] += 1
-                flow_type = classify_flow_type(src_node, dst_node)
-                raw_flow_type_counter[flow_type] += 1
-    # 按节点 ID 顺序打印，避免 defaultdict 按插入顺序导致的错位
-    print("\n每个节点被选中次数（按节点 ID 0..255 顺序）:")
-    for node_id in range(NUM_NODES):
-        print(f"{count[node_id]} ", end='')
-    print()
-
-    # 分组统计：用于快速对比“实际被选中占比”与“输入概率质量”
-    total_picks = NUM_NODES * TOKENS_PER_NODE * TOP_K
-    print("\n每 64 节点分组统计（actual_share vs prob_mass）:")
-    for group_id in range(NUM_NODES // 64):
-        start = group_id * 64
-        end = start + 64
-        group_count = sum(count[node_id] for node_id in range(start, end))
-        actual_share = group_count / total_picks
-        prob_mass = probability[start:end].sum()
-        print(
-            f"  group {group_id} ({start:3d}-{end - 1:3d}): "
-            f"actual={actual_share:.6f}, prob={prob_mass:.6f}, "
-            f"count={group_count}"
-        )
-
-    print_flow_type_ratio(
-        "\n三类流统计（按原始选中次数）",
-        raw_flow_type_counter,
-        total_picks,
-    )
-
-    # 生成 traffic.csv 记录
+    # 统计信息收集
+    total_dispatch_flows = 0
+    flow_type_counter = defaultdict(int)
+    node_as_dst_count = defaultdict(int)
+    
+    # 生成流量记录
     records = []
     task_id = 0
     
-    print("\n生成 Dispatch 阶段记录 (Phase 0)...")
-    # Phase 0: Dispatch 阶段
-    # phaseId = dst (目标节点 ID),用于 Combine 阶段依赖该节点的所有 Dispatch
-    for (src, dst), stats in flow_stats.items():
-        if stats['dispatch_count'] > 0:
-            total_size = stats['dispatch_count'] * DISPATCH_SIZE
-            records.append({
-                'taskId': task_id,
-                'sourceNode': src,
-                'destNode': dst,
-                'dataSize': total_size,
-                'opType': 'URMA_WRITE',
-                'priority': PRIORITY,
-                'delay': '0ns',
-                'phaseId': dst,    # 使用 dst 作为 phaseId，便于 Combine 依赖
-                'dependOnPhases': ''
-            })
-            task_id += 1
-
-    merged_flow_type_counter = defaultdict(int)
-    for (src, dst), stats in flow_stats.items():
-        if stats['dispatch_count'] > 0:
-            flow_type = classify_flow_type(src, dst)
-            merged_flow_type_counter[flow_type] += 1
-
+    print("\n生成流量记录并统计分析...")
+    for src_node in range(NUM_NODES):
+        if src_node % 64 == 0:
+            print(f"  处理节点 {src_node}/{NUM_NODES}...")
+        
+        for token_idx in range(TOKENS_PER_NODE):
+            expert_nodes = select_expert_nodes(src_node, probability, TOP_K)
+            
+            for dst_node in expert_nodes:
+                # 同时收集统计信息
+                total_dispatch_flows += 1
+                flow_type = classify_flow_type(src_node, dst_node)
+                flow_type_counter[flow_type] += 1
+                node_as_dst_count[dst_node] += 1
+                
+                # 生成 Dispatch 和 Combine 记录
+                dispatch_task_id = task_id
+                combine_task_id = task_id + 1
+                
+                # Dispatch 记录
+                records.append({
+                    'taskId': dispatch_task_id,
+                    'sourceNode': src_node,
+                    'destNode': dst_node,
+                    'dataSize': DISPATCH_SIZE,
+                    'opType': 'URMA_WRITE',
+                    'priority': PRIORITY,
+                    'delay': '0ns',
+                    'phaseId': dispatch_task_id,
+                    'dependOnPhases': ''
+                })
+                
+                # Combine 记录
+                records.append({
+                    'taskId': combine_task_id,
+                    'sourceNode': dst_node,
+                    'destNode': src_node,
+                    'dataSize': COMBINE_SIZE,
+                    'opType': 'URMA_WRITE',
+                    'priority': PRIORITY,
+                    'delay': '100ns',
+                    'phaseId': combine_task_id,
+                    'dependOnPhases': str(dispatch_task_id)
+                })
+                
+                task_id += 2
+    
+    # 打印统计分析
+    print("\n" + "-"*80)
+    print("流量模式统计分析")
+    print("-"*80)
+    
+    # 每节点被选中次数（前 32 个节点）
+    print(f"\n节点被选中为专家的次数:")
+    for node_id in range(NUM_NODES):
+        print(f"{node_as_dst_count[node_id]:4d}  ", end='')
+    print()
+    
+    # 分组统计
+    total_picks = NUM_NODES * TOKENS_PER_NODE * TOP_K
+    print(f"\n\n每 64 节点分组统计 (actual_share vs prob_mass):")
+    for group_id in range(NUM_NODES // 64):
+        start = group_id * 64
+        end = start + 64
+        group_count = sum(node_as_dst_count[node_id] for node_id in range(start, end))
+        actual_share = group_count / total_picks
+        prob_mass = probability[start:end].sum()
+        diff = abs(actual_share - prob_mass) * 100
+        print(f"  Group {group_id} ({start:3d}-{end-1:3d}): "
+              f"actual={actual_share:.6f}, prob={prob_mass:.6f}, "
+              f"diff={diff:.4f}%, count={group_count}")
+    
+    # 流类型统计
     print_flow_type_ratio(
-        "三类流统计（按合并后流条数）",
-        merged_flow_type_counter,
-        sum(merged_flow_type_counter.values()),
+        "\n三类流分布统计",
+        flow_type_counter,
+        total_dispatch_flows,
     )
     
-    print(f"Dispatch 阶段记录数：{len(records)}")
-    
-    print("\n生成 Combine 阶段记录 (Phase 1, 依赖 Phase 0)...")
-    # Phase 1: Combine 阶段
-    # dependOnPhases = dst，表示依赖所有发往节点 dst 的 Dispatch 任务
-    combine_count = 0
-    # for (src, dst), stats in flow_stats.items():
-    #     if stats['combine_count'] > 0:
-    #         total_size = stats['combine_count'] * COMBINE_SIZE
-    #         records.append({
-    #             'taskId': task_id,
-    #             'sourceNode': dst, # Combine: dst → src (返回结果)
-    #             'destNode': src,
-    #             'dataSize': total_size,
-    #             'opType': 'URMA_WRITE',
-    #             'priority': PRIORITY,
-    #             'delay': '100ns',
-    #             'phaseId': dst+1000,  # 避免与 Dispatch 的 phaseId 重复（可选）
-    #             'dependOnPhases': dst   # 依赖所有 phaseId=dst 的 Dispatch 任务
-    #         })
-    #         task_id += 1
-    #         combine_count += 1
-    
-    print(f"Combine 阶段记录数：{combine_count}")
-    print(f"总记录数：{len(records)}")
-
-     # 计算数据包数量统计
-    dispatch_total_packets = 0
-    combine_total_packets = 0
-    
-    for record in records:
-        data_size = record['dataSize']
-        # 向上取整计算需要的数据包数量
-        packet_count = (data_size + PACKET_SIZE - 1) // PACKET_SIZE
-        if record['phaseId'] < 1000:  # Dispatch 阶段
-            dispatch_total_packets += packet_count
-        else:  # Combine 阶段
-            combine_total_packets += packet_count
-    
-    print(f"\n数据包统计信息（每个数据包 {PACKET_SIZE}B）:")
-    print(f"  Dispatch 阶段总数据包数：{dispatch_total_packets:,}")
-    print(f"  Combine 阶段总数据包数：{combine_total_packets:,}")
-    print(f"  总数据包数：{dispatch_total_packets + combine_total_packets:,}")
-
-    
+   
     return records
 
 # ==================== 写入 CSV 文件 ====================
@@ -333,18 +260,36 @@ def write_traffic_csv(records: List[Dict], output_file: str):
         records: 流量记录列表
         output_file: 输出文件路径
     """
+       # 确保输出目录存在
+    output_dir = os.path.dirname(output_file)
+    if output_dir and not os.path.exists(output_dir):
+        print(f"创建输出目录：{output_dir}")
+        os.makedirs(output_dir, exist_ok=True)
+      # 根据开关决定是否过滤 Combine 阶段
+
+    if WRITE_COMBINE_TO_CSV:
+        records_to_write = records
+        print(f"\n写入模式：Dispatch + Combine 阶段")
+    else:
+        records_to_write = [r for r in records if r['taskId'] % 2 == 0]
+        print(f"\n写入模式：仅 Dispatch 阶段 (Combine 阶段已生成但不写入)")
+       
     with open(output_file, 'w', encoding='utf-8') as f:
         # 写入表头
         f.write("taskId,sourceNode,destNode,dataSize(Byte),opType,priority,delay,phaseId,dependOnPhases\n")
         
         # 写入记录
-        for record in records:
+        for record in records_to_write:
             line = f"{record['taskId']},{record['sourceNode']},{record['destNode']}," \
                    f"{record['dataSize']},{record['opType']},{record['priority']}," \
                    f"{record['delay']},{record['phaseId']},{record['dependOnPhases']}\n"
             f.write(line)
     
-    print(f"\n✓ 流量配置已保存到：{output_file}")
+    print(f"✓ 流量配置已保存到：{output_file}")
+    print(f"✓ 写入记录数：{len(records_to_write):,} 条")
+    if not WRITE_COMBINE_TO_CSV:
+        combine_count = len(records) - len(records_to_write)
+        print(f"✓ 跳过 Combine 阶段记录：{combine_count:,} 条")
 
 # ==================== 主函数 ====================
 def main():
@@ -374,7 +319,7 @@ def main():
     
     # Step 3: 写入 CSV 文件
     print("\n[Step 3] 写入 CSV 文件...")
-    output_file = "/app/ns-3-ub/scratch/tp_UB_Mesh_V0002/traffic.csv"
+    output_file = "/app/ns-3-ub/scratch/tp_UB_Mesh_V0000/traffic.csv"
     write_traffic_csv(records, output_file)
     
     # Step 4: 统计信息
@@ -382,8 +327,8 @@ def main():
     print("流量统计信息")
     print("=" * 60)
     
-    dispatch_records = [r for r in records if r['phaseId'] <1000]
-    combine_records = [r for r in records if r['phaseId'] >=1000]
+    dispatch_records = [r for r in records if r['phaseId'] %2==0]
+    combine_records = [r for r in records if r['phaseId'] %2==1]
     
     dispatch_total_data = sum(r['dataSize'] for r in dispatch_records)
     combine_total_data = sum(r['dataSize'] for r in combine_records)
@@ -403,7 +348,7 @@ def main():
     # 验证流量守恒
     print(f"\n流量守恒验证:")
     print(f"  Dispatch 平均每条流：{dispatch_total_data / len(dispatch_records):.0f} bytes")
-    #print(f"  Combine 平均每条流：{combine_total_data / len(combine_records):.0f} bytes")
+    print(f"  Combine 平均每条流：{combine_total_data / len(combine_records):.0f} bytes")
     print(f"  比例：{combine_total_data / dispatch_total_data:.2f} (应为 2.0)")
     
     print(f"\n数据包详细统计（每个数据包 {PACKET_SIZE}B = 4KB）:")
@@ -412,7 +357,7 @@ def main():
     print(f"    - 平均每流数据包数：{dispatch_total_packets / len(dispatch_records):.2f} 个")
     print(f"  Combine 阶段:")
     print(f"    - 总数据包数：{combine_total_packets:,} 个")
-    #print(f"    - 平均每流数据包数：{combine_total_packets / len(combine_records):.2f} 个")
+    print(f"    - 平均每流数据包数：{combine_total_packets / len(combine_records):.2f} 个")
     print(f"  合计:")
     print(f"    - 总数据包数：{dispatch_total_packets + combine_total_packets:,} 个")
     

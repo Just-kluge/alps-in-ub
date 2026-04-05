@@ -51,6 +51,8 @@ public:
     uint8_t GetHopCount() const;
     void SetPathId(uint32_t pathId);
     uint32_t GetPathId() const;
+    void SetPathLength(uint16_t pathLength);
+    uint16_t GetPathLength() const;
     void SetDirection (uint8_t direction);
     uint8_t GetDirection (void) const;
     void SetType (uint8_t type);
@@ -63,16 +65,21 @@ public:
     uint32_t GetScaledAccQlenInKB (void) const;
     void SetAckPsn(uint32_t ackPsn);
     uint32_t GetAckPsn() const;
+    void AppendQueueingDelayNanoSeconds(uint32_t delayNs);
+    const std::vector<uint32_t>& GetQueueingDelayNanoSecondsList() const;
+    void ClearQueueingDelayNanoSecondsList();
 
 private:
     // 5 + 1 + 1 + 8 + 1 + 4 = 20 bytes
     UbAlpsSrInfo m_srInfo; // 5 bytes (40 bits)
+    uint16_t m_pathLength {0}; // 数据包路径总跳数，仅用于统计
     uint8_t m_direction; // 0: data, 1: ack. 1 bit
     uint8_t m_type; // 0: normal, 1: probe. 1 bit
     Time m_timeStamp; // 8 bytes (64 bits)
     uint8_t m_rateInHundredGbps; // 发送端网卡速率，单位为100Gbps. 1 byte (8 bits)
     uint32_t m_scaledAccQlenInKB; // scaled accumulated queue length in KB, for ALPS congestion control. 4 bytes (32 bits)
     uint32_t m_ackPsn {0}; // Packet-level ACK PSN used by ALPS sender matching.
+    std::vector<uint32_t> m_queueingDelayNanoSecondsList; // ACK 返程沿途各交换机追加的排队时延列表（单位ns）
 };
 
 }

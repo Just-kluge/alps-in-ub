@@ -4,6 +4,7 @@
 
 #include "ns3/ub-datatype.h"
 #include "ns3/ub-controller.h"
+#include "ns3/ub-monitor.h"
 #include "ns3/ub-transaction.h"
 #include "ns3/ub-utils.h"
 
@@ -180,6 +181,8 @@ void UbTransaction::TriggerScheduleWqeSegment(uint32_t jettyNum)
 
 void UbTransaction::ApplyScheduleWqeSegment(Ptr<UbTransportChannel> tp)
 {
+    if (tp != nullptr) {
+    }
     Simulator::ScheduleNow(&UbTransaction::ScheduleWqeSegment, this, tp);
 }
 
@@ -305,7 +308,13 @@ void UbTransaction::OnScheduleWqeSegmentFinish(Ptr<UbWqeSegment> segment)
 bool UbTransaction::ProcessWqeSegmentComplete(Ptr<UbWqeSegment> wqeSegment)
 {
     Ptr<UbJetty> jetty = GetJetty(wqeSegment->GetJettyNum());
-    return jetty->ProcessWqeSegmentComplete(wqeSegment->GetTaSsn());
+    const uint32_t taSsn = wqeSegment->GetTaSsn();
+
+
+
+    const bool completed = jetty->ProcessWqeSegmentComplete(taSsn);
+
+    return completed;
 }
 
 void UbTransaction::TriggerTpTransmit(uint32_t jettyNum)
