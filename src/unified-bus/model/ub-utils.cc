@@ -931,24 +931,16 @@ vector<TrafficRecord> UbUtils::ReadTrafficCSV(const string &filename)
             fieldCount++;
         }
         if (record.opType == "URMA_WRITE") {
-            UbAlpsPacketTracker::RecordPlannedFlow(record.sourceNode, record.destNode);
+            UbAlpsPacketTracker::RecordPlannedFlow(record.sourceNode, record.destNode,record.taskId);
+            UbAlpsNodeReceiveTracker::RecordTask(record.destNode, record.taskId);
         }
         UbTrafficGen::Get()->SetPhaseDepend(record.phaseId, record.taskId);
         records.push_back(record);
     }
     file.close();
 
-    const auto& nodeCounters = UbAlpsPacketTracker::GetAllNodeFlowTypeCounters();
-    if (!nodeCounters.empty()) {
-        std::vector<uint32_t> nodes;
-        nodes.reserve(nodeCounters.size());
-        for (const auto& kv : nodeCounters) {
-            nodes.push_back(kv.first);
-        }
-        std::sort(nodes.begin(), nodes.end());
-
         NS_LOG_UNCOND("[ALPS_INIT_CHECK] per-node flow type counts and initial rates:");
-        for (uint32_t nodeId : nodes) {
+        for (uint32_t nodeId = 0; nodeId < 1; nodeId++) {
             DataRate maxRate(400000000000ULL);
             if (nodeId < NodeList::GetNNodes()) {
                 Ptr<Node> node = NodeList::GetNode(nodeId);
@@ -959,6 +951,7 @@ vector<TrafficRecord> UbUtils::ReadTrafficCSV(const string &filename)
                     }
                 }
             }
+            UbAlpsPacketTracker::PrintNodeAllTPRates(nodeId, maxRate);
            // const auto counters = UbAlpsPacketTracker::GetNodeFlowTypeCounters(nodeId);
             // const DataRate sameColRate = UbHostAlps::EstimateInitialRateByType(
             //     nodeId,
@@ -984,7 +977,7 @@ vector<TrafficRecord> UbUtils::ReadTrafficCSV(const string &filename)
             //     << ", initRateGbps="
             //     << static_cast<double>(crossRackRate.GetBitRate()) / 1e9
             //     << ") maxRateGbps=" << static_cast<double>(maxRate.GetBitRate()) / 1e9);
-        }
+        
     }
 
     return records;

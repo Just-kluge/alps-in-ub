@@ -3,7 +3,10 @@
 #include "ns3/ub-monitor.h"
 
 #include <algorithm>
+#include <fstream>
+#include <iomanip>
 #include <sstream>
+#include <vector>
 #include "ns3/ub-transport.h"
 #include "ns3/log.h"
 #include "ns3/simulator.h"
@@ -14,12 +17,21 @@ NS_LOG_COMPONENT_DEFINE("UbMonitor");
 
 std::unordered_map<uint32_t, UbAlpsPacketTracker::FlowTypeCounters>
 	UbAlpsPacketTracker::s_nodeFlowTypeCounters;
+std::unordered_map<uint32_t, std::unordered_map<uint32_t, UbAlpsPacketTracker::FlowTypeCounters>>
+	UbAlpsPacketTracker::s_nodeTPFlowTypeCounters;
 UbAlpsPacketTracker::GlobalDropStats UbAlpsPacketTracker::s_totalDropStats;
 UbAlpsPacketTracker::GlobalDropStats UbAlpsPacketTracker::s_windowDropStats;
 //===========true表示输出数据包全局信息打印到控制台中；=======================
+bool UbAlpsPacketTracker::s_shouldPrintlog = true;
 bool UbAlpsPacketTracker::s_dropStatsReportScheduled = true;
 Time UbAlpsPacketTracker::s_lastDropStatsReportTime = Seconds(0);
 uint64_t UbAlpsPacketTracker::s_totalSwitchDroppedPkts = 0;
+
+std::unordered_map<uint32_t, UbAlpsNodeReceiveTracker::NodeReceiveCounters>
+	UbAlpsNodeReceiveTracker::s_nodeReceiveCounters;
+	//监测接收端接收数据的情况，用来分析是否匹配节点流量生成概率
+bool UbAlpsNodeReceiveTracker::s_enableNodeReceiveTracker = true;
+bool UbAlpsNodeReceiveTracker::s_reportScheduled = false;
 
 static UbAlpsPacketTracker::FlowDropStats&
 GetFlowDropStatsRef(UbAlpsPacketTracker::GlobalDropStats& stats, UbAlpsPacketTracker::FlowType type)
@@ -53,6 +65,7 @@ void
 UbAlpsPacketTracker::ResetGlobalFlowTypeStats()
 {
 	s_nodeFlowTypeCounters.clear();
+	s_nodeTPFlowTypeCounters.clear();
 	s_totalDropStats = GlobalDropStats{};
 	s_windowDropStats = GlobalDropStats{};
 	s_lastDropStatsReportTime = Seconds(0);
@@ -96,21 +109,35 @@ UbAlpsPacketTracker::ClassifyFlowType(uint32_t srcNode, uint32_t dstNode)
 }
 
 void
-UbAlpsPacketTracker::RecordPlannedFlow(uint32_t srcNode, uint32_t dstNode)
+UbAlpsPacketTracker::RecordPlannedFlow(uint32_t srcNode, uint32_t dstNode, uint32_t Taskid)
 {
+        if(s_shouldPrintlog){
+		NS_LOG_UNCOND("[ALPS_INIT_CHECK] 当前速率初始化时会将奇数号Taskid排掉，因为奇数号Taskid被设置成combine阶段流，而目前初始化Dispatch阶段流不需要考虑combine阶段流 " << srcNode);
+		s_shouldPrintlog = false;
+	}
+     //奇数号是combine的流，初始化时不考虑combine流数，当然后面还要考虑combine流的速率怎么设置
+     if (Taskid %2!= 0)
+     {
+         return;
+     }
+
 	const FlowType type = ClassifyFlowType(srcNode, dstNode);
 	auto& counters = s_nodeFlowTypeCounters[srcNode];
+	auto& tpCounters = s_nodeTPFlowTypeCounters[srcNode][dstNode];
 	if (type == FlowType::SAME_COL)
 	{
 		++counters.sameCol;
+		++tpCounters.sameCol;
 	}
 	else if (type == FlowType::SAME_RACK_CROSS_COL)
 	{
 		++counters.sameRackCrossCol;
+		++tpCounters.sameRackCrossCol;
 	}
 	else
 	{
 		++counters.crossRack;
+		++tpCounters.crossRack;
 	}
 }
 
@@ -125,6 +152,22 @@ UbAlpsPacketTracker::GetNodeFlowTypeCounters(uint32_t srcNode)
 	return it->second;
 }
 
+UbAlpsPacketTracker::FlowTypeCounters
+UbAlpsPacketTracker::GetNodeTPFlowTypeCounters(uint32_t srcNode, uint32_t dstNode)
+{
+	auto nodeIt = s_nodeTPFlowTypeCounters.find(srcNode);
+	if (nodeIt == s_nodeTPFlowTypeCounters.end())
+	{
+		return FlowTypeCounters{};
+	}
+	auto tpIt = nodeIt->second.find(dstNode);
+	if (tpIt == nodeIt->second.end())
+	{
+		return FlowTypeCounters{};
+	}
+	return tpIt->second;
+}
+
 const std::unordered_map<uint32_t, UbAlpsPacketTracker::FlowTypeCounters>&
 UbAlpsPacketTracker::GetAllNodeFlowTypeCounters()
 {
@@ -132,35 +175,87 @@ UbAlpsPacketTracker::GetAllNodeFlowTypeCounters()
 }
 
 DataRate
-UbAlpsPacketTracker::EstimateInitialRateByType(uint32_t srcNode, FlowType type, DataRate maxRate)
+UbAlpsPacketTracker::EstimateInitialRateByType(uint32_t srcNode,
+												 uint32_t dstNode,
+												 DataRate maxRate)
 {
 	uint64_t maxRateBps = maxRate.GetBitRate();
 	if (maxRateBps == 0)
 	{
 		maxRateBps = 400000000000ULL;
 	}
-
+    const FlowType tpType = UbAlpsPacketTracker::ClassifyFlowType(srcNode, dstNode);
 	const FlowTypeCounters counters = GetNodeFlowTypeCounters(srcNode);
-	const uint32_t typeFlowCount = std::max<uint32_t>(1, GetTypeFlowCount(counters, type));
+	const uint32_t typeFlowCount = std::max<uint32_t>(1, GetTypeFlowCount(counters, tpType));
+	uint32_t tpTypeFlowCount = 1;
+	const FlowTypeCounters TPcounters = GetNodeTPFlowTypeCounters(srcNode, dstNode);
+	tpTypeFlowCount = std::max<uint32_t>(1, GetTypeFlowCount(TPcounters, tpType));
 
 	const uint64_t budgetUnit = std::max<uint64_t>(1, maxRateBps / 15);
 	uint64_t typeBudgetBps = 4 * budgetUnit;
-	if (type == FlowType::SAME_COL)
+	if (tpType == FlowType::SAME_COL)
 	{
 		typeBudgetBps = 7 * budgetUnit;
 	}
 
-	uint64_t initRateBps = std::max<uint64_t>(1, typeBudgetBps / typeFlowCount);
-	if (type == FlowType::SAME_COL)
+	uint64_t initRateBps = std::max<uint64_t>(1, (typeBudgetBps / typeFlowCount) * tpTypeFlowCount);
+	if (tpType == FlowType::SAME_COL)
 	{
-		initRateBps = std::max<uint64_t>(1, static_cast<uint64_t>(initRateBps * 0.5));
+		initRateBps = std::max<uint64_t>(1, static_cast<uint64_t>(initRateBps * 0.4));
 	}
 	else
 	{
-		initRateBps = std::max<uint64_t>(1, (initRateBps * 8) / 10);
+		initRateBps = std::max<uint64_t>(1, (initRateBps * 6) / 10);
 	}
 
 	return DataRate(initRateBps);
+}
+
+void
+UbAlpsPacketTracker::PrintNodeAllTPRates(uint32_t srcNode, DataRate maxRate)
+{
+	auto nodeTpIt = s_nodeTPFlowTypeCounters.find(srcNode);
+	if (nodeTpIt == s_nodeTPFlowTypeCounters.end() || nodeTpIt->second.empty())
+	{
+		NS_LOG_UNCOND("[ALPS_INIT_CHECK][NODE=" << srcNode
+											 << "] no TP flow records in s_nodeTPFlowTypeCounters");
+		return;
+	}
+
+	const FlowTypeCounters nodeCounters = GetNodeFlowTypeCounters(srcNode);
+	const uint32_t nodeTotalFlows = nodeCounters.sameCol + nodeCounters.sameRackCrossCol + nodeCounters.crossRack;
+
+	NS_LOG_UNCOND("[ALPS_INIT_CHECK][NODE=" << srcNode
+									 << "] nodeFlowTypeCounters(total=" << nodeTotalFlows
+									 << ", same_col=" << nodeCounters.sameCol
+									 << ", same_rack_cross_col=" << nodeCounters.sameRackCrossCol
+									 << ", cross_rack=" << nodeCounters.crossRack << ")");
+
+	for (const auto& tpKv : nodeTpIt->second)
+	{
+		const uint32_t dstNode = tpKv.first;
+		const FlowTypeCounters tpCounters = tpKv.second;
+		const FlowType tpType = ClassifyFlowType(srcNode, dstNode);
+		const uint32_t tpTypeFlowCount = GetTypeFlowCount(tpCounters, tpType);
+		const uint32_t typeFlowCount = GetTypeFlowCount(nodeCounters, tpType);
+		const double ratio = (typeFlowCount == 0) ? 0.0
+													  : static_cast<double>(tpTypeFlowCount) / static_cast<double>(typeFlowCount);
+		const DataRate initRate = EstimateInitialRateByType(srcNode, dstNode, maxRate);
+
+		std::ostringstream ratioOss;
+		ratioOss << std::fixed << std::setprecision(4) << ratio;
+
+		NS_LOG_UNCOND("[ALPS_INIT_CHECK][NODE=" << srcNode << "][TP(dst=" << dstNode
+												 << ", type=" << GetFlowTypeName(tpType)
+												 << ")] tpTypeFlowCount=" << tpTypeFlowCount
+												 << " typeFlowCount=" << typeFlowCount
+												 << " ratio=" << ratioOss.str()
+												 << " initRateGbps="
+												 << static_cast<double>(initRate.GetBitRate()) / 1e9
+												 << " tpCounters(same_col=" << tpCounters.sameCol
+												 << ", same_rack_cross_col=" << tpCounters.sameRackCrossCol
+												 << ", cross_rack=" << tpCounters.crossRack << ")");
+	}
 }
 
 void
@@ -435,4 +530,96 @@ UbAlpsPacketTracker::GetTypeFlowCount(const FlowTypeCounters& counters, FlowType
 	return counters.crossRack;
 }
 
+void
+UbAlpsNodeReceiveTracker::Reset()
+{
+	s_nodeReceiveCounters.clear();
+	s_reportScheduled = false;
+}
+
+void
+UbAlpsNodeReceiveTracker::EnsureReportScheduled()
+{
+	if (s_reportScheduled)
+	{
+		return;
+	}
+	s_reportScheduled = true;
+	Simulator::ScheduleDestroy(&UbAlpsNodeReceiveTracker::ReportAtSimulationEnd);
+}
+
+void
+UbAlpsNodeReceiveTracker::RecordPacketReceived(uint32_t nodeId, uint32_t packetSizeBytes,uint32_t Taskid)
+{
+	if (!s_enableNodeReceiveTracker)
+	{
+		return;
+	}
+
+	auto& counters = s_nodeReceiveCounters[nodeId];
+	if (packetSizeBytes >= 4000)
+	{
+		++counters.ge4000Bytes;
+		counters.TaskisCompleted[Taskid]++;
+	}
+	else
+	{
+		++counters.lt4000Bytes;
+		counters.TaskisCompleted[Taskid]++;
+	}
+
+	EnsureReportScheduled();
+}
+
+void
+UbAlpsNodeReceiveTracker::ReportAtSimulationEnd()
+{
+	if (!s_enableNodeReceiveTracker)
+	{
+		return;
+	}
+
+	const std::string outputPath =
+		"/app/ns-3-ub/scratch/tp_UB_Mesh_V0002/ub_alps_node_receive.log";
+	std::ofstream out(outputPath, std::ios::out | std::ios::trunc);
+	if (!out.is_open())
+	{
+		NS_LOG_UNCOND("[ALPS_NODE_RECV_TRACKER] failed to open output file: " << outputPath);
+		return;
+	}
+
+	out << "nodeid,4000+B,4000-B\n";
+	std::vector<uint32_t> nodeIds;
+	nodeIds.reserve(s_nodeReceiveCounters.size());
+	for (const auto& kv : s_nodeReceiveCounters)
+	{
+		nodeIds.push_back(kv.first);
+	}
+	std::sort(nodeIds.begin(), nodeIds.end());
+
+	for (uint32_t nodeId : nodeIds)
+	{
+		const auto& c = s_nodeReceiveCounters[nodeId];
+		out << nodeId << "," << c.ge4000Bytes << "," << c.lt4000Bytes << "。";
+		for (auto i:c.TaskisCompleted)
+		{    if(i.second==-1){
+			out << "[Taskid:"<<i.first<<" , 未开始 ];";
+		}else if(i.second==0){
+			out << "[Taskid:"<<i.first<<" , 进行中 ];";
+		}
+		
+		}
+		out << "\n";
+	}
+	out.close();
+
+	NS_LOG_UNCOND("[ALPS_NODE_RECV_TRACKER] report written to " << outputPath);
+}
+void UbAlpsNodeReceiveTracker::RecordTask(uint32_t dstnodeId, uint32_t Taskid){
+	if (!s_enableNodeReceiveTracker)
+	{
+		return;
+	}
+	 s_nodeReceiveCounters[dstnodeId].TaskisCompleted[Taskid]=-1;
+}
 } // namespace ns3

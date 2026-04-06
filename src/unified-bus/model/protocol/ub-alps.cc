@@ -359,9 +359,9 @@ void UbHostAlps::InitRateControlState()
         maxRateBps = 400000000000ULL; // 400Gbps fallback
     }
 
-    const UbAlpsPacketTracker::FlowType tpType = UbAlpsPacketTracker::ClassifyFlowType(m_src, m_dst);
+   
     m_maxRate = DataRate(maxRateBps);
-    m_currentRate = UbAlpsPacketTracker::EstimateInitialRateByType(m_src, tpType, m_maxRate);
+    m_currentRate = UbAlpsPacketTracker::EstimateInitialRateByType(m_src, m_dst, m_maxRate);
     m_baseRate = DataRate(std::min<uint64_t>(maxRateBps, m_currentRate.GetBitRate() * 2));
     //1Gbps的下限是为了避免过低的速率限制，实际使用中可以根据需要调整
     m_minRate = DataRate(std::min<uint64_t>(1000000000ULL, maxRateBps));
@@ -417,7 +417,7 @@ bool UbHostAlps::TrySpeedUpForALPS(Time maxBaseDelay)
      uint32_t remainingTimeNs = leftBits * 1000000000 / newRateBps;
     UpdateNextSendTimeForRateAdjustment(remainingTimeNs);
     const Time cooldown = std::max(NanoSeconds(1), maxBaseDelay);
-    m_nextSpeedupTime = Simulator::Now() + cooldown /2;
+    m_nextSpeedupTime = Simulator::Now() + cooldown /8;
     return true;
 }
 
@@ -432,7 +432,7 @@ bool UbHostAlps::TrySlowDownForALPS(Time maxBaseDelay)
     const uint64_t maxRateBps = std::max<uint64_t>(1, m_maxRate.GetBitRate());
     const uint64_t minRateBps = std::min<uint64_t>(m_minRate.GetBitRate(), maxRateBps);
     const uint64_t currentBps = std::min<uint64_t>(maxRateBps, std::max<uint64_t>(minRateBps, m_currentRate.GetBitRate()));
-    const uint64_t newRateBps = std::max<uint64_t>(minRateBps, currentBps / 2);
+    const uint64_t newRateBps = std::max<uint64_t>(minRateBps, currentBps*0.8);
     //计算当前数据包还有多少数据没发送
     uint64_t leftBits=(double)(currentBps)/1000000000*
     ((m_nextSendTime.GetNanoSeconds()-Simulator::Now().GetNanoSeconds())>=0
@@ -442,9 +442,9 @@ bool UbHostAlps::TrySlowDownForALPS(Time maxBaseDelay)
      // 根据新的发送速率和剩余窗口计算下次发送时间
     uint32_t remainingTimeNs = leftBits * 1000000000 / newRateBps;
     UpdateNextSendTimeForRateAdjustment(remainingTimeNs);
+    //调整maxBaseDelay的时候m_nextSlowdownTime也会进行变动
     const Time cooldown = std::max(NanoSeconds(1), maxBaseDelay);
     m_nextSlowdownTime = Simulator::Now() + cooldown;
-    m_nextSpeedupTime= Simulator::Now() + cooldown/2;
     return true;
 
 

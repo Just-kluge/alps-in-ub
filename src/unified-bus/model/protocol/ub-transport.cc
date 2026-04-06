@@ -753,7 +753,7 @@ void UbTransportChannel::RecvTpAckForAlps(Ptr<Packet> p)
     p->RemoveHeader(AckTaHeader); // 处理接收包信息
 
 
-    //解析APLStag
+    //=============================解析APLStag================================================
           //获取当前节点路由表
           auto RoutingProcess=NodeList::GetNode(m_nodeId)->GetObject<UbSwitch>()->GetRoutingProcess();
         if(RoutingProcess->GetRoutingAlgorithm() == UbRoutingProcess::UbRoutingAlgorithm::ALPS){
@@ -807,12 +807,22 @@ void UbTransportChannel::RecvTpAckForAlps(Ptr<Packet> p)
             RoutingProcess->HandleAlpsAckByPsn(packet_pid, m_tpn, ackPsn,m_sport);
         }
 
+    //=============================解析APLStag================================================
         UbFlowTag flowTag;
         p->PeekPacketTag(flowTag);
 
        //================拥塞控制==============================
    
         m_congestionCtrl->SenderRecvAck(TpHeader.GetPsn(), CETPH);
+       //================拥塞控制==============================
+
+
+        if (m_pktTraceEnabled) {
+            UbPacketTraceTag traceTag;
+            p->PeekPacketTag(traceTag);
+            TpRecvNotify(p->GetUid(), m_psnSndUna - 1, m_dest, m_src, m_dstTpn, m_tpn,
+                         PacketType::ACK, p->GetSize(), flowTag.GetFlowId(), traceTag);
+        }
 
     // 拿到多个packet后组成taack发送
     if ((TpHeader.GetPsn() + 1) > m_psnSndUna) {
@@ -836,12 +846,7 @@ void UbTransportChannel::RecvTpAckForAlps(Ptr<Packet> p)
                   << " Src: " << m_src
                   << " Dst: " << m_dest
                   << " PacketSize: " << p->GetSize());
-        if (m_pktTraceEnabled) {
-            UbPacketTraceTag traceTag;
-            p->PeekPacketTag(traceTag);
-            TpRecvNotify(p->GetUid(), m_psnSndUna - 1, m_dest, m_src, m_dstTpn, m_tpn,
-                         PacketType::ACK, p->GetSize(), flowTag.GetFlowId(), traceTag);
-        }
+      
          //ALPS有自己的重传机制
         // // 收到有效ack后更新rto和超时重传次数为初始值，关闭超时事件并重新设定超时事件
         // if (m_isRetransEnable) {
@@ -1145,7 +1150,8 @@ void UbTransportChannel::RecvDataPacketForAlps(Ptr<Packet> p)
     if ((s_totalDataPacketsReceived)%50000 == 0) {
        std::cout << "totalDataPacketsReceived: " << s_totalDataPacketsReceived << std::endl;
     }
-
+ 
+    
     UbDatalinkPacketHeader pktHeader;
     UbTransactionHeader TaHeader;
     UbAckTransactionHeader AckTaHeader;
@@ -1201,6 +1207,9 @@ void UbTransportChannel::RecvDataPacketForAlps(Ptr<Packet> p)
         TpRecvNotify(p->GetUid(), psn, m_dest, m_src, m_dstTpn, m_tpn,
                      PacketType::PACKET, p->GetSize(), flowTag.GetFlowId(), traceTag);
     }
+    ////看看Task进行到哪个阶段了
+     UbAlpsNodeReceiveTracker::RecordPacketReceived(m_nodeId, p->GetSize(), flowTag.GetFlowId());
+
     ackp->AddPacketTag(flowTag);
     if (TpHeader.GetLastPacket()) {
         // 尾包被接收

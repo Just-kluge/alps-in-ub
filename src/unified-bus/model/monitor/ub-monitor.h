@@ -50,15 +50,59 @@ class UbAlpsPacketTracker
 
 	static void ResetGlobalFlowTypeStats();
 	static FlowType ClassifyFlowType(uint32_t srcNode, uint32_t dstNode);
-	static void RecordPlannedFlow(uint32_t srcNode, uint32_t dstNode);
+	/**
+	 * @brief 记录一条“计划发送流”到全局统计中。
+	 *
+	 * 该接口会同时维护两层计数：
+	 * 1) 节点级计数：s_nodeFlowTypeCounters[srcNode]
+	 *    - 表示 srcNode 在每种 FlowType 上的总流数量。
+	 * 2) TP级计数：s_nodeTPFlowTypeCounters[srcNode][dstNode]
+	 *    - 表示 srcNode 到指定 TP(当前以 dstNode 作为键)在每种 FlowType 上的流数量。
+	 *
+	 * 设计目的：
+	 * - 节点级计数用于得到某 FlowType 的总池子大小(typeFlowCount)。
+	 * - TP级计数用于得到该 TP 在该 FlowType 内的占比(tpTypeFlowCount/typeFlowCount)。
+	 * - 后续初始化速率可按该占比分配。
+	 *
+	 * @param srcNode 源节点 ID。
+	 * @param dstNode 目的节点 ID。当前实现中用作 TP 维度的索引键。
+	 * @param Taskid 任务 ID。奇数任务被视为 combine 阶段，不参与初始化流数量统计。
+	 */
+	static void RecordPlannedFlow(uint32_t srcNode, uint32_t dstNode,uint32_t Taskid);
 	static FlowTypeCounters GetNodeFlowTypeCounters(uint32_t srcNode);
+	static FlowTypeCounters GetNodeTPFlowTypeCounters(uint32_t srcNode, uint32_t dstNode);
 	static const std::unordered_map<uint32_t, FlowTypeCounters>& GetAllNodeFlowTypeCounters();
-	static DataRate EstimateInitialRateByType(uint32_t srcNode, FlowType type, DataRate maxRate);
+	/**
+	 * @brief 按“TP在该类型内的流数量占比”估算初始发送速率。
+	 *
+	 * 计算步骤：
+	 * 1) 使用 ClassifyFlowType(srcNode, dstNode) 得到该 TP 的流类型 tpType。
+	 * 2) 取该源节点在 tpType 上的总流数 typeFlowCount。
+	 * 3) 取该 TP(以 dstNode 索引)在 tpType 上的流数 tpTypeFlowCount。
+	 * 4) 先为每种类型分配预算 typeBudgetBps：
+	 *    - SAME_COL: 7/15 * maxRate
+	 *    - 其它类型: 4/15 * maxRate
+	 * 5) 再按占比分配给当前 TP：
+	 *    initRateBps = max(1, (typeBudgetBps / typeFlowCount) * tpTypeFlowCount)
+	 * 6) 保留现有类型缩放策略：
+	 *    - SAME_COL: 乘 0.5
+	 *    - 其它类型: 乘 0.8
+	 *
+	 * 当统计缺失时，计数会通过 max(1, ...) 兜底，避免除零并保证最小 1bps 输出。
+	 *
+	 * @param srcNode 源节点 ID。
+	 * @param dstNode 目的节点 ID。当前实现中用作 TP 维度的索引键。
+	 * @param maxRate 源端口最大速率；若为 0，内部回退到 400Gbps。
+	 * @return DataRate 估算得到的 TP 初始发送速率。
+	 */
+	static DataRate EstimateInitialRateByType(uint32_t srcNode,
+									  uint32_t dstNode,
+									  DataRate maxRate);
 
 	static void RecordAlpsPacketSent(uint32_t srcNode, uint32_t dstNode, uint32_t pathLength);
 	static void RecordAlpsPacketReceived(uint32_t srcNode, uint32_t dstNode);
 	static void RecordAlpsPacketDrop(uint32_t srcNode, uint32_t dstNode, uint32_t hop, uint32_t pathLength);
-
+    static void PrintNodeAllTPRates(uint32_t srcNode, DataRate maxRate);
 	static void IncrementSwitchDroppedPackets();
 	static uint64_t GetSwitchDroppedPackets();
 
@@ -72,11 +116,40 @@ class UbAlpsPacketTracker
 		const std::map<uint32_t, std::map<uint32_t, uint64_t>>& lengthHopDist);
 
 	static std::unordered_map<uint32_t, FlowTypeCounters> s_nodeFlowTypeCounters;
+	static std::unordered_map<uint32_t, std::unordered_map<uint32_t, FlowTypeCounters>>
+		s_nodeTPFlowTypeCounters;
 	static GlobalDropStats s_totalDropStats;
 	static GlobalDropStats s_windowDropStats;
+	//输出速率初始化用的哪些流，仅仅输出一次
+    static bool s_shouldPrintlog;
 	static bool s_dropStatsReportScheduled;
 	static Time s_lastDropStatsReportTime;
 	static uint64_t s_totalSwitchDroppedPkts;
+};
+
+class UbAlpsNodeReceiveTracker
+{
+  public:
+	struct NodeReceiveCounters
+	{
+		uint64_t ge4000Bytes = 0;
+		uint64_t lt4000Bytes = 0;
+		//键为taskid,值为任务是否完成，-1为未开始，0为进行中，1为完成
+		std::unordered_map<uint32_t, int> TaskisCompleted;
+	};
+
+	// Global switch for enabling/disabling node receive tracking.
+	static bool s_enableNodeReceiveTracker;
+
+	static void Reset();
+	static void RecordPacketReceived(uint32_t nodeId, uint32_t packetSizeBytes,uint32_t Taskid);
+	static void ReportAtSimulationEnd();
+    static void RecordTask(uint32_t dstnodeId, uint32_t Taskid);
+  private:
+	static void EnsureReportScheduled();
+
+	static std::unordered_map<uint32_t, NodeReceiveCounters> s_nodeReceiveCounters;
+	static bool s_reportScheduled;
 };
 
 } // namespace ns3
