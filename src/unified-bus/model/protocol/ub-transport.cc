@@ -1285,7 +1285,9 @@ void UbTransportChannel::RecvDataPacketForAlps(Ptr<Packet> p)
         }  
         else { // ALPS算法 发回乱序包ACK
                 TpHeader.SetTPOpcode(TpOpcode::TP_OPCODE_ACK_WITHOUT_CETPH);
-                TpHeader.SetPsn(m_psnRecvNxt - 1);
+                //===============修复，发乱序ACKpsn为的0的时候，psn-1可能下溢=======4月6日下午--jyxiao改
+                uint32_t ackPsn = (m_psnRecvNxt > 0) ? (m_psnRecvNxt - 1) : 0;
+                TpHeader.SetPsn(ackPsn);
                 TpHeader.SetSrcTpn(m_tpn);
                 TpHeader.SetDestTpn(m_dstTpn);
                 CETPH.SetAckSequence(m_psnRecvNxt - 1);
