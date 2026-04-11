@@ -295,7 +295,7 @@ inline void UbUtils::DagMemTaskStartsNotify(uint32_t nodeId, uint32_t taskId)
     string info = "MEM Task Starts, taskId: " + std::to_string(taskId);
     string fileName = trace_path + "runlog/TaskTrace_node_" + to_string(nodeId) + ".tr";
     PrintTraceInfo(fileName, info);
-    ns3::UbTaskFctMonitor::RecordTaskStart(nodeId, taskId);
+ 
 }
 
 inline void UbUtils::DagMemTaskCompletesNotify(uint32_t nodeId, uint32_t taskId)
@@ -303,7 +303,7 @@ inline void UbUtils::DagMemTaskCompletesNotify(uint32_t nodeId, uint32_t taskId)
     string info = "MEM Task Completes, taskId: " + std::to_string(taskId);
     string fileName = trace_path + "runlog/TaskTrace_node_" + to_string(nodeId) + ".tr";
     PrintTraceInfo(fileName, info);
-    ns3::UbTaskFctMonitor::RecordTaskComplete(nodeId, taskId);
+
 }
 
 inline void UbUtils::DagWqeTaskStartsNotify(uint32_t nodeId, uint32_t jettyNum, uint32_t taskId)
@@ -313,6 +313,7 @@ inline void UbUtils::DagWqeTaskStartsNotify(uint32_t nodeId, uint32_t jettyNum, 
     string info = oss.str();
     string fileName = trace_path + "runlog/TaskTrace_node_" + to_string(nodeId) + ".tr";
     PrintTraceInfo(fileName, info);
+    ns3::UbTaskFctMonitor::RecordTaskStart(nodeId, taskId);
 }
 
 inline void UbUtils::DagWqeTaskCompletesNotify(uint32_t nodeId, uint32_t jettyNum, uint32_t taskId)
@@ -322,6 +323,7 @@ inline void UbUtils::DagWqeTaskCompletesNotify(uint32_t nodeId, uint32_t jettyNu
     string info = oss.str();
     string fileName = trace_path + "runlog/TaskTrace_node_" + to_string(nodeId) + ".tr";
     PrintTraceInfo(fileName, info);
+    ns3::UbTaskFctMonitor::RecordTaskComplete(nodeId, taskId);
 }
 
 inline void UbUtils::PortTxNotify(uint32_t nodeId, uint32_t portId, uint32_t size)

@@ -43,7 +43,8 @@ std::string UbPortMetricsSampler::s_outputDir;
 bool UbPortMetricsSampler::s_running = false;
 
 std::unordered_map<uint64_t, Time> UbTaskFctMonitor::s_taskStartTimes;
-std::ofstream UbTaskFctMonitor::s_stream;
+std::vector<UbTaskFctMonitor::TaskFctRecord> UbTaskFctMonitor::s_completedRecords;
+std::vector<UbTaskFctMonitor::TaskFctRecord> UbTaskFctMonitor::s_anomalyRecords;
 std::string UbTaskFctMonitor::s_outputFile;
 bool UbTaskFctMonitor::s_running = false;
 
@@ -270,27 +271,120 @@ UbTaskFctMonitor::Start(const std::string& outputDir)
 	Stop();
 	EnsureOutputDirectory(outputDir);
 	s_outputFile = BuildOutputPath(outputDir);
-	s_stream.open(s_outputFile.c_str(), std::ios::out | std::ios::trunc);
-	NS_ASSERT_MSG(s_stream.is_open(), "Can not open task fct file: " << s_outputFile);
-	s_stream << "nodeId,taskId,start_us,end_us,fct_us,status\n";
 	s_taskStartTimes.clear();
+	s_completedRecords.clear();
+	s_anomalyRecords.clear();
 	s_running = true;
+}
+
+int64_t
+UbTaskFctMonitor::ComputePercentileFct(const std::vector<TaskFctRecord>& records, double percentile)
+{
+	if (records.empty()) {
+		return 0;
+	}
+
+	std::vector<int64_t> values;
+	values.reserve(records.size());
+	for (const auto& record : records) {
+		if (record.fctUs >= 0) {
+			values.push_back(record.fctUs);
+		}
+	}
+	if (values.empty()) {
+		return 0;
+	}
+
+	std::sort(values.begin(), values.end());
+	if (percentile <= 0.0) {
+		return values.front();
+	}
+	if (percentile >= 1.0) {
+		return values.back();
+	}
+
+	const double rank = percentile * static_cast<double>(values.size());
+	const size_t idx = static_cast<size_t>(std::max(0.0, std::ceil(rank) - 1.0));
+	return values[std::min(idx, values.size() - 1)];
 }
 
 void
 UbTaskFctMonitor::Stop()
 {
-	if (s_stream.is_open()) {
-		for (const auto& entry : s_taskStartTimes) {
-			const uint32_t nodeId = static_cast<uint32_t>(entry.first >> 32);
-			const uint32_t taskId = static_cast<uint32_t>(entry.first & 0xffffffffu);
-			const int64_t startUs = entry.second.GetMicroSeconds();
-			s_stream << nodeId << ',' << taskId << ',' << startUs << ",,,incomplete\n";
-		}
-		s_stream.flush();
-		s_stream.close();
+	if (!s_running) {
+		return;
 	}
+
+	for (const auto& entry : s_taskStartTimes) {
+		TaskFctRecord record;
+		record.nodeId = static_cast<uint32_t>(entry.first >> 32);
+		record.taskId = static_cast<uint32_t>(entry.first & 0xffffffffu);
+		record.startUs = entry.second.GetNanoSeconds();
+		record.status = "incomplete";
+		s_anomalyRecords.push_back(record);
+	}
+
+	std::sort(
+		s_completedRecords.begin(),
+		s_completedRecords.end(),
+		[](const TaskFctRecord& a, const TaskFctRecord& b) {
+			if (a.fctUs != b.fctUs) {
+				return a.fctUs > b.fctUs;
+			}
+			if (a.nodeId != b.nodeId) {
+				return a.nodeId < b.nodeId;
+			}
+			return a.taskId < b.taskId;
+		});
+
+	std::ofstream stream(s_outputFile.c_str(), std::ios::out | std::ios::trunc);
+	NS_ASSERT_MSG(stream.is_open(), "Can not open task fct file: " << s_outputFile);
+
+	long double sumFct = 0.0;
+	int64_t maxFct = 0;
+	for (const auto& record : s_completedRecords) {
+		sumFct += static_cast<long double>(record.fctUs);
+		if (record.fctUs > maxFct) {
+			maxFct = record.fctUs;
+		}
+	}
+
+	const size_t completedCount = s_completedRecords.size();
+	const double avgFct = completedCount > 0
+		? static_cast<double>(sumFct / static_cast<long double>(completedCount))
+		: 0.0;
+	const int64_t p99fct = ComputePercentileFct(s_completedRecords, 0.99);
+
+	stream << "#summary,completed=" << completedCount
+	       << ",avg_fct_ns=" << std::fixed << std::setprecision(3) << avgFct
+	       << ",pfct_ns(p99)=" << p99fct
+	       << ",max_fct_ns=" << maxFct
+	       << ",anomaly=" << s_anomalyRecords.size()
+	       << "\n";
+	stream << "nodeId,taskId,start_ns,end_ns,fct_ns,status\n";
+
+	for (const auto& record : s_completedRecords) {
+		stream << record.nodeId << ','
+		       << record.taskId << ','
+		       << record.startUs << ','
+		       << record.endUs << ','
+		       << record.fctUs << ','
+		       << record.status << '\n';
+	}
+	for (const auto& record : s_anomalyRecords) {
+		stream << record.nodeId << ','
+		       << record.taskId << ','
+		       << record.startUs << ','
+		       << record.endUs << ','
+		       << record.fctUs << ','
+		       << record.status << '\n';
+	}
+	stream.flush();
+	stream.close();
+
 	s_taskStartTimes.clear();
+	s_completedRecords.clear();
+	s_anomalyRecords.clear();
 	s_running = false;
 }
 
@@ -312,25 +406,34 @@ UbTaskFctMonitor::RecordTaskStart(uint32_t nodeId, uint32_t taskId)
 void
 UbTaskFctMonitor::RecordTaskComplete(uint32_t nodeId, uint32_t taskId)
 {
-	if (!s_running || !s_stream.is_open()) {
+	if (!s_running) {
 		return;
 	}
 
 	const Time endTime = Simulator::Now();
-	const int64_t endUs = endTime.GetMicroSeconds();
+	const int64_t endUs = endTime.GetNanoSeconds();
 	const uint64_t key = MakeTaskKey(nodeId, taskId);
 	const auto it = s_taskStartTimes.find(key);
 	if (it == s_taskStartTimes.end()) {
-		s_stream << nodeId << ',' << taskId << ",," << endUs << ",,missing_start\n";
-		s_stream.flush();
+		TaskFctRecord missingStart;
+		missingStart.nodeId = nodeId;
+		missingStart.taskId = taskId;
+		missingStart.endUs = endUs;
+		missingStart.status = "missing_start";
+		s_anomalyRecords.push_back(missingStart);
 		return;
 	}
 
-	const int64_t startUs = it->second.GetMicroSeconds();
-	const int64_t fctUs = std::max<int64_t>(0, endUs - startUs);
-	s_stream << nodeId << ',' << taskId << ',' << startUs << ',' << endUs << ',' << fctUs << ",ok\n";
+	TaskFctRecord record;
+	record.nodeId = nodeId;
+	record.taskId = taskId;
+	record.startUs = it->second.GetNanoSeconds();
+	record.endUs = endUs;
+	record.fctUs = std::max<int64_t>(0, endUs - record.startUs);
+	record.status = "ok";
+	s_completedRecords.push_back(record);
+
 	s_taskStartTimes.erase(it);
-	s_stream.flush();
 }
 
 static UbAlpsPacketTracker::FlowDropStats&

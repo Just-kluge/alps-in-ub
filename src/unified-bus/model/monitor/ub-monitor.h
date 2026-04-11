@@ -188,6 +188,16 @@ class UbPortMetricsSampler
 class UbTaskFctMonitor
 {
   public:
+	struct TaskFctRecord
+	{
+		uint32_t nodeId = 0;
+		uint32_t taskId = 0;
+		int64_t startUs = -1;
+		int64_t endUs = -1;
+		int64_t fctUs = -1;
+		std::string status;
+	};
+
 	static void Start(const std::string& outputDir);
 	static void Stop();
 	static bool IsRunning();
@@ -198,9 +208,11 @@ class UbTaskFctMonitor
 	static void EnsureOutputDirectory(const std::string& outputDir);
 	static std::string BuildOutputPath(const std::string& outputDir);
 	static uint64_t MakeTaskKey(uint32_t nodeId, uint32_t taskId);
+ 	static int64_t ComputePercentileFct(const std::vector<TaskFctRecord>& records, double percentile);
 
 	static std::unordered_map<uint64_t, Time> s_taskStartTimes;
-	static std::ofstream s_stream;
+	static std::vector<TaskFctRecord> s_completedRecords;
+	static std::vector<TaskFctRecord> s_anomalyRecords;
 	static std::string s_outputFile;
 	static bool s_running;
 };
