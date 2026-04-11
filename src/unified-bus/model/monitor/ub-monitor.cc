@@ -287,8 +287,8 @@ UbTaskFctMonitor::ComputePercentileFct(const std::vector<TaskFctRecord>& records
 	std::vector<int64_t> values;
 	values.reserve(records.size());
 	for (const auto& record : records) {
-		if (record.fctUs >= 0) {
-			values.push_back(record.fctUs);
+		if (record.fctNs >= 0) {
+			values.push_back(record.fctNs);
 		}
 	}
 	if (values.empty()) {
@@ -319,7 +319,7 @@ UbTaskFctMonitor::Stop()
 		TaskFctRecord record;
 		record.nodeId = static_cast<uint32_t>(entry.first >> 32);
 		record.taskId = static_cast<uint32_t>(entry.first & 0xffffffffu);
-		record.startUs = entry.second.GetNanoSeconds();
+		record.startNs = entry.second.GetNanoSeconds();
 		record.status = "incomplete";
 		s_anomalyRecords.push_back(record);
 	}
@@ -328,8 +328,8 @@ UbTaskFctMonitor::Stop()
 		s_completedRecords.begin(),
 		s_completedRecords.end(),
 		[](const TaskFctRecord& a, const TaskFctRecord& b) {
-			if (a.fctUs != b.fctUs) {
-				return a.fctUs > b.fctUs;
+			if (a.fctNs != b.fctNs) {
+				return a.fctNs > b.fctNs;
 			}
 			if (a.nodeId != b.nodeId) {
 				return a.nodeId < b.nodeId;
@@ -343,9 +343,9 @@ UbTaskFctMonitor::Stop()
 	long double sumFct = 0.0;
 	int64_t maxFct = 0;
 	for (const auto& record : s_completedRecords) {
-		sumFct += static_cast<long double>(record.fctUs);
-		if (record.fctUs > maxFct) {
-			maxFct = record.fctUs;
+		sumFct += static_cast<long double>(record.fctNs);
+		if (record.fctNs > maxFct) {
+			maxFct = record.fctNs;
 		}
 	}
 
@@ -366,17 +366,17 @@ UbTaskFctMonitor::Stop()
 	for (const auto& record : s_completedRecords) {
 		stream << record.nodeId << ','
 		       << record.taskId << ','
-		       << record.startUs << ','
-		       << record.endUs << ','
-		       << record.fctUs << ','
+		       << record.startNs << ','
+		       << record.endNs << ','
+		       << record.fctNs << ','
 		       << record.status << '\n';
 	}
 	for (const auto& record : s_anomalyRecords) {
 		stream << record.nodeId << ','
 		       << record.taskId << ','
-		       << record.startUs << ','
-		       << record.endUs << ','
-		       << record.fctUs << ','
+		       << record.startNs << ','
+		       << record.endNs << ','
+		       << record.fctNs << ','
 		       << record.status << '\n';
 	}
 	stream.flush();
@@ -411,14 +411,14 @@ UbTaskFctMonitor::RecordTaskComplete(uint32_t nodeId, uint32_t taskId)
 	}
 
 	const Time endTime = Simulator::Now();
-	const int64_t endUs = endTime.GetNanoSeconds();
+	const int64_t endNs = endTime.GetNanoSeconds();
 	const uint64_t key = MakeTaskKey(nodeId, taskId);
 	const auto it = s_taskStartTimes.find(key);
 	if (it == s_taskStartTimes.end()) {
 		TaskFctRecord missingStart;
 		missingStart.nodeId = nodeId;
 		missingStart.taskId = taskId;
-		missingStart.endUs = endUs;
+		missingStart.endNs = endNs;
 		missingStart.status = "missing_start";
 		s_anomalyRecords.push_back(missingStart);
 		return;
@@ -427,9 +427,9 @@ UbTaskFctMonitor::RecordTaskComplete(uint32_t nodeId, uint32_t taskId)
 	TaskFctRecord record;
 	record.nodeId = nodeId;
 	record.taskId = taskId;
-	record.startUs = it->second.GetNanoSeconds();
-	record.endUs = endUs;
-	record.fctUs = std::max<int64_t>(0, endUs - record.startUs);
+	record.startNs = it->second.GetNanoSeconds();
+	record.endNs = endNs;
+	record.fctNs = std::max<int64_t>(0, endNs - record.startNs);
 	record.status = "ok";
 	s_completedRecords.push_back(record);
 

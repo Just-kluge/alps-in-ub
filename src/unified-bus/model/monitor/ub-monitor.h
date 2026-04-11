@@ -192,9 +192,9 @@ class UbTaskFctMonitor
 	{
 		uint32_t nodeId = 0;
 		uint32_t taskId = 0;
-		int64_t startUs = -1;
-		int64_t endUs = -1;
-		int64_t fctUs = -1;
+		int64_t startNs = -1;
+		int64_t endNs = -1;
+		int64_t fctNs = -1;
 		std::string status;
 	};
 
