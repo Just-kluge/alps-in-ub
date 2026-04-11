@@ -51,6 +51,7 @@ void UbUtils::ParseTrace(bool isTest)
 
 void UbUtils::Destroy()
 {   ns3::UbPortMetricsSampler::Stop();
+    ns3::UbTaskFctMonitor::Stop();
     for (auto &pair : files) {
         if (pair.second->is_open()) {
             pair.second->close();
@@ -294,6 +295,7 @@ inline void UbUtils::DagMemTaskStartsNotify(uint32_t nodeId, uint32_t taskId)
     string info = "MEM Task Starts, taskId: " + std::to_string(taskId);
     string fileName = trace_path + "runlog/TaskTrace_node_" + to_string(nodeId) + ".tr";
     PrintTraceInfo(fileName, info);
+    ns3::UbTaskFctMonitor::RecordTaskStart(nodeId, taskId);
 }
 
 inline void UbUtils::DagMemTaskCompletesNotify(uint32_t nodeId, uint32_t taskId)
@@ -301,6 +303,7 @@ inline void UbUtils::DagMemTaskCompletesNotify(uint32_t nodeId, uint32_t taskId)
     string info = "MEM Task Completes, taskId: " + std::to_string(taskId);
     string fileName = trace_path + "runlog/TaskTrace_node_" + to_string(nodeId) + ".tr";
     PrintTraceInfo(fileName, info);
+    ns3::UbTaskFctMonitor::RecordTaskComplete(nodeId, taskId);
 }
 
 inline void UbUtils::DagWqeTaskStartsNotify(uint32_t nodeId, uint32_t jettyNum, uint32_t taskId)
@@ -1005,6 +1008,7 @@ void UbUtils::TopoTraceConnect()
     g_trace_enable.GetValue(val);
     TraceEnable = val.Get();
     ns3::UbPortMetricsSampler::Start(trace_path + "self_run_log");
+    ns3::UbTaskFctMonitor::Start(trace_path + "self_run_log");
     if (!TraceEnable) {
         return; // 若不开启总开关则直接返回
     }

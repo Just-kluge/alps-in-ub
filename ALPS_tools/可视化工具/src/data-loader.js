@@ -1,4 +1,9 @@
-import { LAYOUT_FILE, PORT_METRICS_FILES } from "./config.js";
+import {
+  LAYOUT_FILE,
+  PATH_SEARCH_FILES,
+  PIT_INDEX_FILES,
+  PORT_METRICS_FILES,
+} from "./config.js";
 
 export async function loadTopologyLayout() {
   const response = await fetch(LAYOUT_FILE);
@@ -19,6 +24,10 @@ function toNumber(value, fallback = 0) {
 
 function makePortKey(nodeId, portId) {
   return `${nodeId}:${portId}`;
+}
+
+function makePathKey(sourceNode, destNode) {
+  return `${sourceNode}-${destNode}`;
 }
 
 async function fetchByCandidates(paths) {
@@ -126,4 +135,108 @@ export function getPortMetric(frameMap, timestampUs, nodeId, portId) {
     return null;
   }
   return frame.get(makePortKey(nodeId, portId)) || null;
+}
+
+export async function loadPitPathIndex() {
+  const { response, sourcePath } = await fetchByCandidates(PIT_INDEX_FILES);
+  const text = await response.text();
+  const lines = text
+    .split(/\r?\n/)
+    .map((l) => l.trim())
+    .filter(Boolean);
+
+  if (lines.length < 2) {
+    throw new Error("PIT 文件为空或缺少数据行");
+  }
+
+  const header = parseCsvLine(lines[0]);
+  const idxPathId = header.indexOf("path_id");
+  const idxTraverseNodes = header.indexOf("traverse_nodes");
+  if (idxPathId < 0 || idxTraverseNodes < 0) {
+    throw new Error("PIT 表头缺少 path_id 或 traverse_nodes 字段");
+  }
+
+  const pathMap = new Map();
+  for (let i = 1; i < lines.length; i += 1) {
+    const cols = parseCsvLine(lines[i]);
+    if (cols.length <= Math.max(idxPathId, idxTraverseNodes)) {
+      continue;
+    }
+
+    const pathId = toNumber(cols[idxPathId], -1);
+    if (pathId < 0) {
+      continue;
+    }
+
+    const nodes = cols[idxTraverseNodes]
+      .split(/\s+/)
+      .map((v) => Number(v))
+      .filter((v) => Number.isFinite(v));
+
+    if (nodes.length < 2) {
+      continue;
+    }
+
+    pathMap.set(pathId, {
+      pathId,
+      sourceNode: nodes[0],
+      destNode: nodes[nodes.length - 1],
+      nodes,
+    });
+  }
+
+  return { sourcePath, pathMap };
+}
+
+export async function loadPathSearchIndex() {
+  const { response, sourcePath } = await fetchByCandidates(PATH_SEARCH_FILES);
+  const text = await response.text();
+  const lines = text
+    .split(/\r?\n/)
+    .map((l) => l.trim())
+    .filter(Boolean);
+
+  if (lines.length < 2) {
+    throw new Error("path_search 文件为空或缺少数据行");
+  }
+
+  const header = parseCsvLine(lines[0]);
+  const idxSourceNode = header.indexOf("sourceNode");
+  const idxDestNode = header.indexOf("destNode");
+  const idxPathIds = header.indexOf("path_ids");
+  if (idxSourceNode < 0 || idxDestNode < 0 || idxPathIds < 0) {
+    throw new Error("path_search 表头缺少 sourceNode / destNode / path_ids 字段");
+  }
+
+  const pathMap = new Map();
+  for (let i = 1; i < lines.length; i += 1) {
+    const cols = parseCsvLine(lines[i]);
+    if (cols.length <= Math.max(idxSourceNode, idxDestNode, idxPathIds)) {
+      continue;
+    }
+
+    const sourceNode = toNumber(cols[idxSourceNode], -1);
+    const destNode = toNumber(cols[idxDestNode], -1);
+    if (sourceNode < 0 || destNode < 0) {
+      continue;
+    }
+
+    const pathIds = cols[idxPathIds]
+      .split(/\s+/)
+      .map((v) => Number(v))
+      .filter((v) => Number.isFinite(v));
+
+    if (!pathIds.length) {
+      continue;
+    }
+
+    pathMap.set(makePathKey(sourceNode, destNode), {
+      sourceNode,
+      destNode,
+      pathIds,
+      numPaths: toNumber(cols[header.indexOf("num_paths")], pathIds.length),
+    });
+  }
+
+  return { sourcePath, pathMap };
 }

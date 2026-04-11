@@ -42,6 +42,11 @@ std::unordered_map<std::string, UbPortMetricsSampler::SamplerState> UbPortMetric
 std::string UbPortMetricsSampler::s_outputDir;
 bool UbPortMetricsSampler::s_running = false;
 
+std::unordered_map<uint64_t, Time> UbTaskFctMonitor::s_taskStartTimes;
+std::ofstream UbTaskFctMonitor::s_stream;
+std::string UbTaskFctMonitor::s_outputFile;
+bool UbTaskFctMonitor::s_running = false;
+
 static std::string
 FormatUtilizationValue(double value)
 {
@@ -234,6 +239,100 @@ UbPortMetricsSampler::Sample(const std::string& label)
 	sampler.stream.flush();
 	ScheduleNext(label);
 }
+
+void
+UbTaskFctMonitor::EnsureOutputDirectory(const std::string& outputDir)
+{
+	struct stat st;
+	if (stat(outputDir.c_str(), &st) == 0 && S_ISDIR(st.st_mode)) {
+		return;
+	}
+	if (mkdir(outputDir.c_str(), 0755) != 0 && errno != EEXIST) {
+		NS_ASSERT_MSG(false, "Failed to create task FCT output dir: " << outputDir << " errno=" << errno);
+	}
+}
+
+std::string
+UbTaskFctMonitor::BuildOutputPath(const std::string& outputDir)
+{
+	return outputDir + "/task_fct.csv";
+}
+
+uint64_t
+UbTaskFctMonitor::MakeTaskKey(uint32_t nodeId, uint32_t taskId)
+{
+	return (static_cast<uint64_t>(nodeId) << 32) | static_cast<uint64_t>(taskId);
+}
+
+void
+UbTaskFctMonitor::Start(const std::string& outputDir)
+{
+	Stop();
+	EnsureOutputDirectory(outputDir);
+	s_outputFile = BuildOutputPath(outputDir);
+	s_stream.open(s_outputFile.c_str(), std::ios::out | std::ios::trunc);
+	NS_ASSERT_MSG(s_stream.is_open(), "Can not open task fct file: " << s_outputFile);
+	s_stream << "nodeId,taskId,start_us,end_us,fct_us,status\n";
+	s_taskStartTimes.clear();
+	s_running = true;
+}
+
+void
+UbTaskFctMonitor::Stop()
+{
+	if (s_stream.is_open()) {
+		for (const auto& entry : s_taskStartTimes) {
+			const uint32_t nodeId = static_cast<uint32_t>(entry.first >> 32);
+			const uint32_t taskId = static_cast<uint32_t>(entry.first & 0xffffffffu);
+			const int64_t startUs = entry.second.GetMicroSeconds();
+			s_stream << nodeId << ',' << taskId << ',' << startUs << ",,,incomplete\n";
+		}
+		s_stream.flush();
+		s_stream.close();
+	}
+	s_taskStartTimes.clear();
+	s_running = false;
+}
+
+bool
+UbTaskFctMonitor::IsRunning()
+{
+	return s_running;
+}
+
+void
+UbTaskFctMonitor::RecordTaskStart(uint32_t nodeId, uint32_t taskId)
+{
+	if (!s_running) {
+		return;
+	}
+	s_taskStartTimes[MakeTaskKey(nodeId, taskId)] = Simulator::Now();
+}
+
+void
+UbTaskFctMonitor::RecordTaskComplete(uint32_t nodeId, uint32_t taskId)
+{
+	if (!s_running || !s_stream.is_open()) {
+		return;
+	}
+
+	const Time endTime = Simulator::Now();
+	const int64_t endUs = endTime.GetMicroSeconds();
+	const uint64_t key = MakeTaskKey(nodeId, taskId);
+	const auto it = s_taskStartTimes.find(key);
+	if (it == s_taskStartTimes.end()) {
+		s_stream << nodeId << ',' << taskId << ",," << endUs << ",,missing_start\n";
+		s_stream.flush();
+		return;
+	}
+
+	const int64_t startUs = it->second.GetMicroSeconds();
+	const int64_t fctUs = std::max<int64_t>(0, endUs - startUs);
+	s_stream << nodeId << ',' << taskId << ',' << startUs << ',' << endUs << ',' << fctUs << ",ok\n";
+	s_taskStartTimes.erase(it);
+	s_stream.flush();
+}
+
 static UbAlpsPacketTracker::FlowDropStats&
 GetFlowDropStatsRef(UbAlpsPacketTracker::GlobalDropStats& stats, UbAlpsPacketTracker::FlowType type)
 {

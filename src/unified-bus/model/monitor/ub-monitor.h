@@ -185,6 +185,26 @@ class UbPortMetricsSampler
 	static bool s_running;
 };
 
+class UbTaskFctMonitor
+{
+  public:
+	static void Start(const std::string& outputDir);
+	static void Stop();
+	static bool IsRunning();
+	static void RecordTaskStart(uint32_t nodeId, uint32_t taskId);
+	static void RecordTaskComplete(uint32_t nodeId, uint32_t taskId);
+
+  private:
+	static void EnsureOutputDirectory(const std::string& outputDir);
+	static std::string BuildOutputPath(const std::string& outputDir);
+	static uint64_t MakeTaskKey(uint32_t nodeId, uint32_t taskId);
+
+	static std::unordered_map<uint64_t, Time> s_taskStartTimes;
+	static std::ofstream s_stream;
+	static std::string s_outputFile;
+	static bool s_running;
+};
+
 } // namespace ns3
 
 #endif // UB_MONITOR_H

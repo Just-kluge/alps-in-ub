@@ -17,12 +17,52 @@
   <body>
     <div id="app">
       <header class="toolbar">
-        <h1>NS-3 UB Topology Viewer (Stage 2)</h1>
+        <h1>NS-3 UB Topology Viewer (Stage 3)</h1>
         <div class="hint">拖动: 左键旋转 | 右键平移 | 滚轮缩放</div>
       </header>
 
       <main class="canvas-wrap">
         <canvas id="topology-canvas"></canvas>
+
+        <aside class="node-port-panel" id="node-port-panel">
+          <div class="npp-title">节点端口排序</div>
+          <div class="npp-sub" id="npp-sub">点击节点后显示端口分组</div>
+          <div class="npp-grid">
+            <div class="npp-col" id="npp-col-up">
+              <div class="npp-head">上行端口</div>
+              <div class="npp-list" id="npp-up">-</div>
+            </div>
+            <div class="npp-col" id="npp-col-down">
+              <div class="npp-head">下行端口</div>
+              <div class="npp-list" id="npp-down">-</div>
+            </div>
+            <div class="npp-col" id="npp-col-same">
+              <div class="npp-head">同层端口</div>
+              <div class="npp-list" id="npp-same">-</div>
+            </div>
+          </div>
+          <div class="npp-search">
+            <div class="npp-head">查询节点</div>
+            <div class="npp-search-row">
+              <input id="node-query-input" type="number" min="0" placeholder="输入节点ID，例如 832" />
+              <button id="node-query-btn" type="button">查询并定位</button>
+            </div>
+            <div class="npp-search-tip" id="npp-search-tip">可直接输入节点ID定位并显示该节点端口情况</div>
+          </div>
+        </aside>
+
+        <aside class="path-panel" id="path-panel">
+          <div class="npp-head">路径查找（源/目的 Host）</div>
+          <div class="npp-search-row">
+            <input id="path-src-input" type="number" min="0" placeholder="源Host ID" />
+            <input id="path-dst-input" type="number" min="0" placeholder="目的Host ID" />
+          </div>
+          <div class="npp-search-row">
+            <button id="path-find-btn" type="button">查找路径</button>
+            <button id="path-reset-btn" type="button">结束透明状态</button>
+          </div>
+          <div class="npp-search-tip" id="path-status">输入源和目的Host后点击查找路径</div>
+        </aside>
 
         <aside class="panel" id="side-panel">
           <div class="panel-topbar">
@@ -77,6 +117,6 @@
       </main>
     </div>
 
-    <script type="module" src="./src/main.js?v=20260411-debug4"></script>
+    <script type="module" src="./src/main.js?v=20260411-debug9"></script>
   </body>
 </html>

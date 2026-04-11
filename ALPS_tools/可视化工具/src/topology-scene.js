@@ -46,6 +46,8 @@ function buildNodeMeshes(scene, nodes) {
       color: NODE_COLORS[type],
       roughness: 0.35,
       metalness: 0.05,
+      transparent: true,
+      opacity: 1,
     });
 
     const mesh = new THREE.InstancedMesh(geometry, material, list.length);
@@ -84,6 +86,7 @@ function buildHalfEdges(edges, nodeMap) {
       to: midPos,
       nodeId: edge.src,
       portId: edge.srcPort,
+      edgeKey: `${Math.min(edge.src, edge.dst)}-${Math.max(edge.src, edge.dst)}`,
     });
 
     halfEdges.push({
@@ -91,6 +94,7 @@ function buildHalfEdges(edges, nodeMap) {
       to: midPos,
       nodeId: edge.dst,
       portId: edge.dstPort,
+      edgeKey: `${Math.min(edge.src, edge.dst)}-${Math.max(edge.src, edge.dst)}`,
     });
   });
   return halfEdges;
@@ -102,6 +106,8 @@ function buildHalfEdgeMesh(scene, halfEdges) {
     color: 0xffffff,
     roughness: 0.55,
     metalness: 0.05,
+    transparent: true,
+    opacity: 0.95,
   });
 
   const mesh = new THREE.InstancedMesh(geometry, material, halfEdges.length);
@@ -256,16 +262,308 @@ export function createTopologyViewer(canvas, layout) {
   addGrid(scene);
 
   const nodeMap = new Map(layout.nodes.map((n) => [n.id, n]));
+  const topoEdgeMap = new Map();
+  layout.edges.forEach((e) => {
+    const a = Math.min(e.src, e.dst);
+    const b = Math.max(e.src, e.dst);
+    topoEdgeMap.set(`${a}-${b}`, [e.src, e.dst]);
+  });
+
   const nodeGroups = buildNodeMeshes(scene, layout.nodes);
   const halfEdges = buildHalfEdges(layout.edges, nodeMap);
   const halfEdgeMesh = buildHalfEdgeMesh(scene, halfEdges);
   const updateHalfEdges = buildEdgeUpdater(halfEdges, halfEdgeMesh);
 
+  const highlightGroup = new THREE.Group();
+  scene.add(highlightGroup);
+
+  const pathEdgeOverlayGeometry = new THREE.CylinderGeometry(1, 1, 1, 6, 1, false);
+  let pathEdgeOverlayMesh = null;
+  let activePathHalfEdgeIndices = [];
+  let pathHighlightEnabled = false;
+
   let metricMode = "queue";
   let onNodeSelect = null;
+  let currentMetricResolver = () => null;
 
   const raycaster = new THREE.Raycaster();
   const pointer = new THREE.Vector2();
+
+  const keyState = {
+    w: false,
+    a: false,
+    s: false,
+    d: false,
+    q: false,
+    e: false,
+    shift: false,
+  };
+
+  const moveForward = new THREE.Vector3();
+  const moveRight = new THREE.Vector3();
+  const moveDelta = new THREE.Vector3();
+  const worldUp = new THREE.Vector3(0, 1, 0);
+
+  function getNodeWorldPosition(nodeId) {
+    const node = nodeMap.get(nodeId);
+    if (!node) {
+      return null;
+    }
+    return toWorldPos(node);
+  }
+
+  function clearHighlightObjects() {
+    while (highlightGroup.children.length) {
+      const child = highlightGroup.children[highlightGroup.children.length - 1];
+      highlightGroup.remove(child);
+      if (child.geometry) {
+        child.geometry.dispose();
+      }
+      if (child.material) {
+        child.material.dispose();
+      }
+    }
+  }
+
+  function clearPathEdgeOverlay() {
+    if (!pathEdgeOverlayMesh) {
+      return;
+    }
+    scene.remove(pathEdgeOverlayMesh);
+    if (pathEdgeOverlayMesh.material) {
+      pathEdgeOverlayMesh.material.dispose();
+    }
+    pathEdgeOverlayMesh = null;
+  }
+
+  function setBaseTransparentMode(enabled) {
+    const nodeOpacity = enabled ? 0.06 : 1;
+    nodeGroups.forEach((g) => {
+      g.mesh.material.opacity = nodeOpacity;
+      g.mesh.material.depthWrite = !enabled;
+      g.mesh.material.needsUpdate = true;
+    });
+
+    halfEdgeMesh.material.opacity = enabled ? 0.03 : 0.95;
+    halfEdgeMesh.material.depthWrite = !enabled;
+    halfEdgeMesh.material.needsUpdate = true;
+  }
+
+  function updatePathEdgeOverlay(metricResolver) {
+    if (!pathEdgeOverlayMesh || !activePathHalfEdgeIndices.length) {
+      return;
+    }
+
+    const tempMatrix = new THREE.Matrix4();
+    const tempQuat = new THREE.Quaternion();
+    const tempScale = new THREE.Vector3();
+    const tempPos = new THREE.Vector3();
+    const tempUp = new THREE.Vector3(0, 1, 0);
+    const tempColor = new THREE.Color(0xffffff);
+
+    activePathHalfEdgeIndices.forEach((halfEdgeIdx, i) => {
+      const half = halfEdges[halfEdgeIdx];
+      if (!half) {
+        return;
+      }
+
+      const dir = half.to.clone().sub(half.from);
+      const length = Math.max(dir.length(), 1e-6);
+      dir.normalize();
+
+      const metric = metricResolver(half.nodeId, half.portId);
+      const visual = resolveMetricVisual(metricMode, metric);
+
+      tempPos.copy(half.from).add(half.to).multiplyScalar(0.5);
+      tempQuat.setFromUnitVectors(tempUp, dir);
+      tempScale.set(visual.radius, length, visual.radius);
+      tempMatrix.compose(tempPos, tempQuat, tempScale);
+
+      pathEdgeOverlayMesh.setMatrixAt(i, tempMatrix);
+      tempColor.setRGB(visual.color.r, visual.color.g, visual.color.b);
+      pathEdgeOverlayMesh.setColorAt(i, tempColor);
+    });
+
+    pathEdgeOverlayMesh.instanceMatrix.needsUpdate = true;
+    if (pathEdgeOverlayMesh.instanceColor) {
+      pathEdgeOverlayMesh.instanceColor.needsUpdate = true;
+    }
+  }
+
+  function highlightPaths(pathNodeArrays) {
+    clearPathEdgeOverlay();
+    clearHighlightObjects();
+    if (!Array.isArray(pathNodeArrays) || pathNodeArrays.length === 0) {
+      return false;
+    }
+
+    setBaseTransparentMode(true);
+
+    const pathNodeSet = new Set();
+    const pathEdgeKeys = new Set();
+
+    pathNodeArrays.forEach((nodes) => {
+      if (!Array.isArray(nodes) || nodes.length < 2) {
+        return;
+      }
+      nodes.forEach((nid) => pathNodeSet.add(nid));
+      for (let i = 0; i < nodes.length - 1; i += 1) {
+        const a = Math.min(nodes[i], nodes[i + 1]);
+        const b = Math.max(nodes[i], nodes[i + 1]);
+        pathEdgeKeys.add(`${a}-${b}`);
+      }
+    });
+
+    const selectedHalfEdgeIndices = [];
+    halfEdges.forEach((half, i) => {
+      if (pathEdgeKeys.has(half.edgeKey)) {
+        selectedHalfEdgeIndices.push(i);
+      }
+    });
+
+    activePathHalfEdgeIndices = selectedHalfEdgeIndices;
+
+    if (activePathHalfEdgeIndices.length) {
+      const overlayMaterial = new THREE.MeshStandardMaterial({
+        color: 0xffffff,
+        roughness: 0.5,
+        metalness: 0.05,
+        transparent: true,
+        opacity: 0.98,
+        depthWrite: true,
+      });
+      pathEdgeOverlayMesh = new THREE.InstancedMesh(
+        pathEdgeOverlayGeometry,
+        overlayMaterial,
+        activePathHalfEdgeIndices.length
+      );
+      pathEdgeOverlayMesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+      scene.add(pathEdgeOverlayMesh);
+      updatePathEdgeOverlay(currentMetricResolver);
+    }
+
+    pathNodeSet.forEach((nid) => {
+      const p = getNodeWorldPosition(nid);
+      const node = nodeMap.get(nid);
+      if (!p) {
+        return;
+      }
+      const mesh = new THREE.Mesh(
+        new THREE.SphereGeometry(0.42, 10, 10),
+        new THREE.MeshStandardMaterial({
+          color: node ? NODE_COLORS[node.type] : 0xffffff,
+          emissive: 0x000000,
+          roughness: 0.2,
+          metalness: 0.05,
+          transparent: true,
+          opacity: 0.98,
+        })
+      );
+      mesh.position.copy(p);
+      highlightGroup.add(mesh);
+    });
+
+    pathHighlightEnabled = true;
+
+    return true;
+  }
+
+  function clearPathHighlight() {
+    pathHighlightEnabled = false;
+    activePathHalfEdgeIndices = [];
+    clearPathEdgeOverlay();
+    clearHighlightObjects();
+    setBaseTransparentMode(false);
+  }
+
+  function canHandleKeyboardMove(event) {
+    const tag = event?.target?.tagName;
+    if (!tag) {
+      return true;
+    }
+    const upper = String(tag).toUpperCase();
+    return upper !== "INPUT" && upper !== "TEXTAREA" && upper !== "SELECT";
+  }
+
+  function onKeyDown(event) {
+    if (!canHandleKeyboardMove(event)) {
+      return;
+    }
+    const key = String(event.key || "").toLowerCase();
+    if (key in keyState) {
+      keyState[key] = true;
+      event.preventDefault();
+    }
+    if (event.shiftKey) {
+      keyState.shift = true;
+    }
+  }
+
+  function onKeyUp(event) {
+    const key = String(event.key || "").toLowerCase();
+    if (key in keyState) {
+      keyState[key] = false;
+      event.preventDefault();
+    }
+    keyState.shift = event.shiftKey;
+  }
+
+  function applyKeyboardMotion(deltaSec) {
+    moveForward.copy(controls.target).sub(camera.position);
+    if (moveForward.lengthSq() < 1e-8) {
+      return;
+    }
+    moveForward.normalize();
+
+    moveRight.crossVectors(moveForward, worldUp);
+    if (moveRight.lengthSq() < 1e-8) {
+      return;
+    }
+    moveRight.normalize();
+
+    moveDelta.set(0, 0, 0);
+    if (keyState.w) {
+      moveDelta.add(moveForward);
+    }
+    if (keyState.s) {
+      moveDelta.sub(moveForward);
+    }
+    if (keyState.d) {
+      moveDelta.add(moveRight);
+    }
+    if (keyState.a) {
+      moveDelta.sub(moveRight);
+    }
+    if (keyState.e) {
+      moveDelta.y += 1;
+    }
+    if (keyState.q) {
+      moveDelta.y -= 1;
+    }
+
+    if (moveDelta.lengthSq() < 1e-8) {
+      return;
+    }
+
+    moveDelta.normalize();
+    const speed = keyState.shift ? 52 : 22;
+    moveDelta.multiplyScalar(speed * deltaSec);
+
+    camera.position.add(moveDelta);
+    controls.target.add(moveDelta);
+  }
+
+  function focusNodeById(nodeId) {
+    const pos = getNodeWorldPosition(nodeId);
+    if (!pos) {
+      return false;
+    }
+
+    controls.target.copy(pos);
+    camera.position.set(pos.x + 18, pos.y + 12, pos.z + 18);
+    controls.update();
+    return true;
+  }
 
   function pickNode(event) {
     const rect = canvas.getBoundingClientRect();
@@ -292,6 +590,8 @@ export function createTopologyViewer(canvas, layout) {
   }
 
   canvas.addEventListener("click", pickNode);
+  window.addEventListener("keydown", onKeyDown);
+  window.addEventListener("keyup", onKeyUp);
 
   const emptySummary = updateHalfEdges(metricMode, () => null);
 
@@ -306,7 +606,16 @@ export function createTopologyViewer(canvas, layout) {
   onResize();
   window.addEventListener("resize", onResize);
 
-  function animate() {
+  let lastAnimateMs = 0;
+
+  function animate(nowMs = 0) {
+    if (lastAnimateMs === 0) {
+      lastAnimateMs = nowMs;
+    }
+    const deltaSec = Math.min((nowMs - lastAnimateMs) / 1000, 0.05);
+    lastAnimateMs = nowMs;
+
+    applyKeyboardMotion(deltaSec);
     controls.update();
     renderer.render(scene, camera);
     requestAnimationFrame(animate);
@@ -317,12 +626,26 @@ export function createTopologyViewer(canvas, layout) {
   return {
     setMetricMode(mode) {
       metricMode = mode === "utilization" ? "utilization" : "queue";
+      if (pathHighlightEnabled) {
+        updatePathEdgeOverlay(currentMetricResolver);
+      }
     },
     setFrameMetricResolver(metricResolver) {
-      return updateHalfEdges(metricMode, metricResolver);
+      currentMetricResolver = metricResolver;
+      const summary = updateHalfEdges(metricMode, metricResolver);
+      if (pathHighlightEnabled) {
+        updatePathEdgeOverlay(metricResolver);
+      }
+      return summary;
     },
     setNodeSelectHandler(handler) {
       onNodeSelect = handler;
+    },
+    focusNodeById,
+    highlightPaths,
+    clearPathHighlight,
+    getNodeById(nodeId) {
+      return nodeMap.get(nodeId) || null;
     },
     getEmptySummary() {
       return emptySummary;

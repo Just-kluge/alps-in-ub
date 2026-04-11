@@ -67,6 +67,118 @@ body {
   height: 100%;
 }
 
+.node-port-panel {
+  position: absolute;
+  top: 12px;
+  left: 12px;
+  width: min(300px, calc(100vw - 36px));
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: rgba(255, 250, 238, 0.9);
+  box-shadow: 0 8px 26px rgba(30, 25, 20, 0.08);
+  padding: 10px;
+  z-index: 10;
+}
+
+.npp-title {
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.npp-sub {
+  margin-top: 4px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.npp-grid {
+  margin-top: 8px;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 8px;
+}
+
+.npp-col {
+  border: 1px dashed var(--line);
+  border-radius: 8px;
+  padding: 6px;
+  min-height: 72px;
+  background: rgba(255, 255, 255, 0.45);
+}
+
+.npp-head {
+  font-size: 12px;
+  font-weight: 600;
+  margin-bottom: 4px;
+}
+
+.npp-list {
+  font-size: 12px;
+  color: #3f3a33;
+  line-height: 1.35;
+  max-height: 148px;
+  overflow: auto;
+  white-space: pre-wrap;
+}
+
+.npp-col.is-empty {
+  display: none;
+}
+
+.npp-search {
+  margin-top: 8px;
+  border: 1px dashed var(--line);
+  border-radius: 8px;
+  padding: 8px;
+  background: rgba(255, 255, 255, 0.45);
+}
+
+.npp-search-row {
+  display: flex;
+  gap: 6px;
+  margin-top: 4px;
+}
+
+.npp-search-row input {
+  flex: 1;
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  padding: 6px 8px;
+  font-size: 12px;
+  background: rgba(255, 255, 255, 0.75);
+}
+
+.npp-search-row button {
+  flex: 1;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  padding: 6px 10px;
+  cursor: pointer;
+  background: #fff7e8;
+  color: var(--ink);
+  font-size: 12px;
+}
+
+.npp-search-tip {
+  margin-top: 4px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.path-panel {
+  position: absolute;
+  left: 12px;
+  bottom: 12px;
+  width: min(300px, calc(100vw - 36px));
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: rgba(255, 250, 238, 0.9);
+  box-shadow: 0 8px 26px rgba(30, 25, 20, 0.08);
+  padding: 10px;
+  z-index: 10;
+}
+
 .panel {
   position: absolute;
   top: 12px;
@@ -251,5 +363,15 @@ body {
     min-width: auto;
     max-height: 60vh;
     resize: none;
+  }
+
+  .node-port-panel {
+    width: calc(100vw - 24px);
+    max-height: 38vh;
+    overflow: auto;
+  }
+
+  .npp-grid {
+    grid-template-columns: 1fr;
   }
 }

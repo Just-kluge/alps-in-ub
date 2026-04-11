@@ -18,9 +18,21 @@ export const LAYOUT_FILE = "./topology_layout.json";
 
 // 可视化工具目录 -> scratch/tp_UB_Mesh_V0002/self_run_log/port_metrics_1us.csv
 export const PORT_METRICS_FILES = [
-  "./port_metrics_1us.csv",
-  "../../../tp_UB_Mesh_V0002/self_run_log/port_metrics_1us.csv",
+  "./Input/port_metrics_1us.csv",
+  "../../../../tp_UB_Mesh_V0002/self_run_log/port_metrics_1us.csv",
   "/scratch/tp_UB_Mesh_V0002/self_run_log/port_metrics_1us.csv",
+];
+
+export const PIT_INDEX_FILES = [
+  "./Input/path_index_table.csv",
+  "../../../../tp_UB_Mesh_V0002/path_index_table.csv",
+  "/scratch/tp_UB_Mesh_V0002/path_index_table.csv",
+];
+
+export const PATH_SEARCH_FILES = [
+  "./Input/path_search_table.csv",
+  "../../../../tp_UB_Mesh_V0002/path_search_table.csv",
+  "/scratch/tp_UB_Mesh_V0002/path_search_table.csv",
 ];
 
 export const QUEUE_LIMIT_BYTES = 1024 * 1024;
