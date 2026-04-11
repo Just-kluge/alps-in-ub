@@ -420,7 +420,8 @@ uint32_t UbRoutingProcess::GetPidOnHostForPacketSpraying( AlpsPstEntry* pstEntry
         // ALPS路径实时延迟按“无排队时延 + 端口映射里的最新排队时延”现算。
         const double realtimeLatency = static_cast<double>(pitEntry->GetRealTimeLatency(this)); // 这里GetRealTimeLatency会动态计算当前路径的实时时延，包含无排队时延和最新的排队时延。
         double ratio = -1.0 * realtimeLatency / maxBaselatency;
-        weights[i] = std::exp(ratio);
+        // 这里乘以初始权重=========4月11日修改-jyxiao
+        weights[i] = std::exp(ratio)*pitEntry->GetWeight(); 
         sum_weights += weights[i]; 
         //std::cout<<"weights["<<i<<"]:"<<weights[i]<<std::endl;
         i++;

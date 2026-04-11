@@ -61,6 +61,10 @@ DU_PER_LRS = 16
 L1_PER_LRS = 4
 # HRS 节点总数（High-level Relay Switch，跨 rack 汇聚核心）。
 HRS_NUM = 4
+# 同 rack 不同列路径的权重缩放（相较于同列路径），用于 ALPS 路径选择概率计算。
+SAME_RACK_DIFF_COL_WEIGHT=0.75
+# 同 pod 跨 rack 路径的权重缩放
+SAME_POD_DIFF_RACK_WEIGHT=0.5   
 
 # key: (rack_0based, col_0based), value: Index 列表
 PORT_INDEX_MAP = {
@@ -125,6 +129,7 @@ class PathEntry:
     ports: List[int]
     edge_indices: List[int]
     total_base_delay_ns: float
+    weight: float = 1.0
 
     @property
     def path_length(self) -> int:
@@ -476,6 +481,9 @@ def build_same_rack_diff_col_paths(
             }
             p = path_from_nodes(nodes, edge_map, node_fwd_delay, hop_choice)
             if p is not None:
+                if not use_new_rule:
+                    # 下行到DU有2条候选但DU->ToR单出口时，降低初始权重。
+                    p.weight = SAME_RACK_DIFF_COL_WEIGHT
                 candidates.append(p)
 
     valid = dedupe_paths(candidates)
@@ -559,6 +567,8 @@ def build_same_pod_diff_rack_paths(
                     }
                     p = path_from_nodes(nodes, edge_map, node_fwd_delay, hop_choice)
                     if p is not None:
+                        # 下行到DU有4条候选但DU->ToR单出口时，降低初始权重。
+                        p.weight = SAME_POD_DIFF_RACK_WEIGHT
                         candidates.append(p)
 
     valid = dedupe_paths(candidates)
@@ -610,7 +620,10 @@ def build_reverse_path(forward: PathEntry, edge_map: EdgeMap, node_fwd_delay: Di
     reversed_indices = list(reversed(forward.edge_indices))
     # 反向路径需沿用“反向后每一跳对应的并行边索引”，确保正反路径可互指。
     hop_choice = {i: idx for i, idx in enumerate(reversed_indices)}
-    return path_from_nodes(reversed_nodes, edge_map, node_fwd_delay, hop_choice)
+    reversed_path = path_from_nodes(reversed_nodes, edge_map, node_fwd_delay, hop_choice)
+    if reversed_path is not None:
+        reversed_path.weight = forward.weight
+    return reversed_path
 
 
 def format_int_list(values: Sequence[int]) -> str:
@@ -659,6 +672,7 @@ def write_tables(case_dir: Path) -> None:
                 "output_ports",
                 "reverse_path_id",
                 "total_base_delay_ns",
+                "weight",
             ]
         )
         pst_writer.writerow(["sourceNode", "destNode", "num_paths", "path_ids"])
@@ -765,6 +779,7 @@ def write_tables(case_dir: Path) -> None:
                         format_int_list(p.ports),
                         reverse_pid,
                         f"{p.total_base_delay_ns:.3f}",
+                        f"{p.weight:.3f}",
                     ]
                 )
                 total_paths += 1
@@ -787,6 +802,7 @@ def write_tables(case_dir: Path) -> None:
                         format_int_list(p.ports),
                         reverse_pid,
                         f"{p.total_base_delay_ns:.3f}",
+                        f"{p.weight:.3f}",
                     ]
                 )
                 total_paths += 1
@@ -820,6 +836,7 @@ def write_tables(case_dir: Path) -> None:
                         format_int_list(p.ports),
                         reverse_pid,
                         f"{p.total_base_delay_ns:.3f}",
+                        f"{p.weight:.3f}",
                     ]
                 )
                 total_paths += 1
@@ -842,6 +859,7 @@ def write_tables(case_dir: Path) -> None:
                         format_int_list(p.ports),
                         reverse_pid,
                         f"{p.total_base_delay_ns:.3f}",
+                        f"{p.weight:.3f}",
                     ]
                 )
                 total_paths += 1

@@ -314,7 +314,7 @@ UbTaskFctMonitor::Stop()
 	if (!s_running) {
 		return;
 	}
-
+     std::cout << "Stopping UbTaskFctMonitor, output file: " << s_outputFile << std::endl;
 	for (const auto& entry : s_taskStartTimes) {
 		TaskFctRecord record;
 		record.nodeId = static_cast<uint32_t>(entry.first >> 32);

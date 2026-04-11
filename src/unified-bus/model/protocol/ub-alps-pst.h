@@ -63,6 +63,7 @@ class AlpsPitEntry
     uint32_t noQueueLatencyNs; // ALPS路径的无队列时延，不包含排队时延等
     Time lastUpdatedTime; // 上次更新时间
     Time lastProbeTime; // 上次探测时间
+    double weight;
     public:
     void SetPathId(uint32_t pathId) { this->pathId = pathId; }
     uint32_t GetPathId() const { return pathId; }
@@ -90,6 +91,7 @@ class AlpsPitEntry
 
     void UpdateLastProbeTime(Time lastProbeTime) { this->lastProbeTime = lastProbeTime; }
     Time GetLastProbeTime() const { return lastProbeTime; }
+    double GetWeight() const { return weight; }
     AlpsPitEntry() : pathId(0), length(0), reversePathId(0), baseLatency(0), noQueueLatencyNs(0)
     {
         nodes.clear();
@@ -97,7 +99,7 @@ class AlpsPitEntry
         lastUpdatedTime = Seconds(0);
         lastProbeTime = Seconds(0);
     }
-    AlpsPitEntry(uint32_t pathId, uint32_t length, std::vector<uint32_t> nodes, std::vector<uint32_t> ports, uint32_t reversePathId, uint32_t m_baseLatency) : pathId(pathId), length(length), reversePathId(reversePathId), nodes(nodes), ports(ports)
+    AlpsPitEntry(uint32_t pathId, uint32_t length, std::vector<uint32_t> nodes, std::vector<uint32_t> ports, uint32_t reversePathId, uint32_t m_baseLatency, double weight) : pathId(pathId), length(length), reversePathId(reversePathId), nodes(nodes), ports(ports), weight(weight)
     {
         lastUpdatedTime = Seconds(0);
         lastProbeTime = Seconds(0);
@@ -109,11 +111,11 @@ class AlpsPitEntry
 
     void Print(std::ostream& os) const
     {
-        os << "PathID:" << pathId << ", length:" << length << ", reversePathID:" << reversePathId << ", baseLatency:" << baseLatency << ", noQueueLatency:" << noQueueLatencyNs << ", nodes:" << VectorToString(nodes) << ", ports:" << VectorToString(ports);
+        os << "PathID:" << pathId << ", length:" << length << ", reversePathID:" << reversePathId << ", baseLatency:" << baseLatency << ", noQueueLatency:" << noQueueLatencyNs << ", nodes:" << VectorToString(nodes) << ", ports:" << VectorToString(ports)<<", weight:"<< weight;
     }
     std::string ToString() const
     {
-        return "[PathID:" + std::to_string(pathId) + ", length:" + std::to_string(length) + ", reversePathID:" + std::to_string(reversePathId) + ", baseLatency:" + std::to_string(baseLatency) + ", noQueueLatency:" + std::to_string(noQueueLatencyNs) + ", nodes:" + VectorToString(nodes) + ", ports:" + VectorToString(ports) + "]";
+        return "[PathID:" + std::to_string(pathId) + ", length:" + std::to_string(length) + ", reversePathID:" + std::to_string(reversePathId) + ", baseLatency:" + std::to_string(baseLatency) + ", noQueueLatency:" + std::to_string(noQueueLatencyNs) + ", nodes:" + VectorToString(nodes) + ", ports:" + VectorToString(ports) + ", weight:" + std::to_string(weight) + "]";
     }
 };
 
