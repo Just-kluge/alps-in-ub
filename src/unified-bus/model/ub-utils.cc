@@ -699,7 +699,7 @@ void UbUtils::AddRoutingTableAlps(const string &filenamePST, const string &filen
         double weight = std::stod(cell);
         PitTable[path_id] = AlpsPitEntry(path_id, path_length, nodes, ports, reverse_path_id, base_latency, weight);
         // std::cout << "PIT Entry added for path_id: " << path_id << ", reverse_path_id: " << reverse_path_id << std::endl;
-        PitTable[path_id].Print(std::cout);
+        //PitTable[path_id].Print(std::cout);
         //std::cout << std::endl;
     }
     file.close();
