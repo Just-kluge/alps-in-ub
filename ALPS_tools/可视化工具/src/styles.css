@@ -1,0 +1,255 @@
+:root {
+  --bg-0: #f4f1e8;
+  --bg-1: #efe8d8;
+  --panel: rgba(255, 250, 238, 0.92);
+  --ink: #2f2a24;
+  --muted: #6f675c;
+  --line: rgba(60, 50, 40, 0.2);
+
+  --host: #145da0;
+  --tor: #f18f01;
+  --du: #3ca370;
+  --l1: #7f5539;
+  --hrs: #bc4749;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#app {
+  width: 100%;
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  color: var(--ink);
+  background:
+    radial-gradient(circle at 10% 10%, #fff8ea 0%, transparent 30%),
+    radial-gradient(circle at 90% 20%, #ffe8c6 0%, transparent 38%),
+    linear-gradient(135deg, var(--bg-0), var(--bg-1));
+  font-family: "IBM Plex Sans", "Noto Sans SC", sans-serif;
+}
+
+.toolbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--line);
+  background: rgba(255, 255, 255, 0.4);
+  backdrop-filter: blur(6px);
+}
+
+.toolbar h1 {
+  margin: 0;
+  font-size: 18px;
+  letter-spacing: 0.4px;
+}
+
+.hint {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.canvas-wrap {
+  position: relative;
+  width: 100%;
+  height: calc(100% - 52px);
+}
+
+#topology-canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.panel {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  width: min(430px, calc(100vw - 24px));
+  max-height: calc(100vh - 92px);
+  min-width: 280px;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--panel);
+  box-shadow: 0 10px 30px rgba(30, 25, 20, 0.08);
+  overflow: hidden;
+  resize: both;
+}
+
+.panel-topbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 8px;
+  border-bottom: 1px dashed var(--line);
+  padding-bottom: 6px;
+}
+
+.panel-topbar button {
+  border: 1px solid var(--line);
+  background: #fff7e8;
+  border-radius: 7px;
+  padding: 2px 8px;
+  cursor: pointer;
+  font-size: 12px;
+}
+
+.panel-body {
+  max-height: calc(100vh - 150px);
+  overflow: auto;
+  padding-right: 2px;
+}
+
+.panel.panel-collapsed {
+  width: 160px;
+  min-width: 160px;
+  max-height: 56px;
+  resize: none;
+}
+
+.panel.panel-collapsed .panel-body {
+  display: none;
+}
+
+.panel h2 {
+  margin: 0 0 8px;
+  font-size: 14px;
+}
+
+.controls {
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 8px;
+  margin-bottom: 10px;
+  background: rgba(255, 255, 255, 0.4);
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 12px;
+  color: var(--muted);
+  margin-bottom: 8px;
+}
+
+.field select,
+.field input[type="range"] {
+  width: 100%;
+}
+
+.row {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+
+.row button {
+  flex: 1;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  padding: 4px 8px;
+  cursor: pointer;
+  background: #fff7e8;
+  color: var(--ink);
+}
+
+.row button:hover {
+  background: #ffeccd;
+}
+
+.time-label {
+  font-size: 12px;
+  color: var(--ink);
+}
+
+.debug-box {
+  margin-top: 8px;
+  border: 1px dashed var(--line);
+  border-radius: 8px;
+  padding: 6px;
+  background: rgba(255, 255, 255, 0.45);
+}
+
+.debug-box summary {
+  cursor: pointer;
+  font-size: 12px;
+  color: var(--ink);
+}
+
+#debug-log {
+  margin: 6px 0 0;
+  max-height: 140px;
+  overflow: auto;
+  font-size: 11px;
+  line-height: 1.25;
+  color: #3f3a33;
+  white-space: pre-wrap;
+}
+
+.panel ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.panel li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 4px 0;
+  font-size: 13px;
+}
+
+.dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+}
+
+.dot.host { background: var(--host); }
+.dot.tor { background: var(--tor); }
+.dot.du { background: var(--du); }
+.dot.l1 { background: var(--l1); }
+.dot.hrs { background: var(--hrs); }
+
+.stats {
+  margin-top: 10px;
+  font-size: 12px;
+  color: var(--muted);
+  border-top: 1px dashed var(--line);
+  padding-top: 8px;
+}
+
+.node-info {
+  font-size: 12px;
+  color: var(--muted);
+  border: 1px dashed var(--line);
+  border-radius: 8px;
+  padding: 6px;
+  margin-top: 6px;
+}
+
+@media (max-width: 900px) {
+  .toolbar {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 6px;
+  }
+
+  .panel {
+    left: 12px;
+    right: 12px;
+    width: auto;
+    min-width: auto;
+    max-height: 60vh;
+    resize: none;
+  }
+}

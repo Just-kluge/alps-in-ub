@@ -3,10 +3,12 @@
 #define UB_MONITOR_H
 
 #include <cstdint>
+#include <fstream>
 #include <ostream>
 #include <map>
 #include <string>
 #include <unordered_map>
+#include <vector>
 
 #include "ns3/data-rate.h"
 #include "ns3/nstime.h"
@@ -128,7 +130,8 @@ class UbAlpsPacketTracker
 };
 
 class UbAlpsNodeReceiveTracker
-{
+{//该类用来监测节点的接收情况，分析是否匹配节点流量生成概率，仅适用于despatch阶段
+ //最终目的是解决部分task异常结束的问题	（已解决）
   public:
 	struct NodeReceiveCounters
 	{
@@ -150,6 +153,36 @@ class UbAlpsNodeReceiveTracker
 
 	static std::unordered_map<uint32_t, NodeReceiveCounters> s_nodeReceiveCounters;
 	static bool s_reportScheduled;
+};
+
+class UbPortMetricsSampler
+{
+  public:
+	static void Start(const std::string& outputDir);
+	static void Stop();
+	static bool IsRunning();
+
+  private:
+	struct SamplerState
+	{
+		Time interval;
+		std::string label;
+		std::string outputFile;
+		std::ofstream stream;
+		std::unordered_map<uint64_t, uint64_t> lastTxBytes;
+	};
+
+	static void EnsureOutputDirectory(const std::string& outputDir);
+	static void OpenSampler(SamplerState& sampler, const std::string& outputDir);
+	static void ScheduleNext(const std::string& label);
+	static void Sample(const std::string& label);
+	static std::string BuildOutputPath(const std::string& outputDir, const std::string& label);
+	static uint64_t MakePortKey(uint32_t nodeId, uint32_t portId);
+	static std::string FormatSeconds(double value);
+
+	static std::unordered_map<std::string, SamplerState> s_samplers;
+	static std::string s_outputDir;
+	static bool s_running;
 };
 
 } // namespace ns3

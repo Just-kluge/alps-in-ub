@@ -50,7 +50,7 @@ void UbUtils::ParseTrace(bool isTest)
 }
 
 void UbUtils::Destroy()
-{
+{   ns3::UbPortMetricsSampler::Stop();
     for (auto &pair : files) {
         if (pair.second->is_open()) {
             pair.second->close();
@@ -1004,7 +1004,7 @@ void UbUtils::TopoTraceConnect()
     BooleanValue val;
     g_trace_enable.GetValue(val);
     TraceEnable = val.Get();
-
+    ns3::UbPortMetricsSampler::Start(trace_path + "self_run_log");
     if (!TraceEnable) {
         return; // 若不开启总开关则直接返回
     }
@@ -1030,6 +1030,7 @@ void UbUtils::TopoTraceConnect()
         NS_LOG_UNCOND("  UB_RECORD_PKT_TRACE:    " << (RecordTraceEnabled ? "ON" : "OFF") << "  (Per-hop packet path tracking)");
     }
     NS_LOG_UNCOND("-------------------------------------------");
+
 
     for (uint32_t i = 0; i < NodeList::GetNNodes(); ++i) {
         Ptr<Node> node = NodeList::GetNode(i);

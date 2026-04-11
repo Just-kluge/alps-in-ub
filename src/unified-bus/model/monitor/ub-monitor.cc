@@ -1,13 +1,18 @@
 // SPDX-License-Identifier: GPL-2.0-only
 
 #include "ns3/ub-monitor.h"
-
 #include <algorithm>
 #include <fstream>
 #include <iomanip>
+#include <sys/stat.h>
+#include <cerrno>
 #include <sstream>
 #include <vector>
 #include "ns3/ub-transport.h"
+#include "ns3/ub-port.h"
+#include "ns3/ub-switch.h"
+#include "ns3/ub-queue-manager.h"
+#include "ns3/node-list.h"
 #include "ns3/log.h"
 #include "ns3/simulator.h"
 
@@ -33,6 +38,202 @@ std::unordered_map<uint32_t, UbAlpsNodeReceiveTracker::NodeReceiveCounters>
 bool UbAlpsNodeReceiveTracker::s_enableNodeReceiveTracker = true;
 bool UbAlpsNodeReceiveTracker::s_reportScheduled = false;
 
+std::unordered_map<std::string, UbPortMetricsSampler::SamplerState> UbPortMetricsSampler::s_samplers;
+std::string UbPortMetricsSampler::s_outputDir;
+bool UbPortMetricsSampler::s_running = false;
+
+static std::string
+FormatUtilizationValue(double value)
+{
+	std::ostringstream oss;
+	oss << std::fixed << std::setprecision(6) << value;
+	return oss.str();
+}
+
+static std::string
+FormatGigaBitsPerSecond(uint64_t bps)
+{
+	std::ostringstream oss;
+	oss << std::fixed << std::setprecision(6) << static_cast<double>(bps) / 1e9;
+	return oss.str();
+}
+
+uint64_t
+UbPortMetricsSampler::MakePortKey(uint32_t nodeId, uint32_t portId)
+{
+	return (static_cast<uint64_t>(nodeId) << 32) | static_cast<uint64_t>(portId);
+}
+
+std::string
+UbPortMetricsSampler::BuildOutputPath(const std::string& outputDir, const std::string& label)
+{
+	return outputDir + "/port_metrics_" + label + ".csv";
+}
+
+std::string
+UbPortMetricsSampler::FormatSeconds(double value)
+{
+	std::ostringstream oss;
+	oss << std::fixed << std::setprecision(6) << value;
+	return oss.str();
+}
+
+void
+UbPortMetricsSampler::EnsureOutputDirectory(const std::string& outputDir)
+{
+	struct stat st;
+	if (stat(outputDir.c_str(), &st) == 0 && S_ISDIR(st.st_mode)) {
+		return;
+	}
+	if (mkdir(outputDir.c_str(), 0755) != 0 && errno != EEXIST) {
+		NS_ASSERT_MSG(false, "Failed to create port metrics output dir: " << outputDir << " errno=" << errno);
+	}
+}
+
+void
+UbPortMetricsSampler::OpenSampler(SamplerState& sampler, const std::string& outputDir)
+{
+	sampler.outputFile = BuildOutputPath(outputDir, sampler.label);
+	sampler.stream.open(sampler.outputFile.c_str(), std::ios::out | std::ios::trunc);
+	NS_ASSERT_MSG(sampler.stream.is_open(), "Can not open port metrics file: " << sampler.outputFile);
+	sampler.stream << "timestamp_us,window_us,nodeId,portId,portCapacityGbps,txBytes,bandwidthUtilization,queueBytes\n";
+}
+
+void
+UbPortMetricsSampler::Start(const std::string& outputDir)
+{    //std::cout << "Starting UbPortMetricsSampler with output directory: " << outputDir << std::endl;
+	Stop();
+	EnsureOutputDirectory(outputDir);
+	s_outputDir = outputDir;
+	s_samplers.clear();
+
+	SamplerState oneUs;
+	oneUs.interval = MicroSeconds(1);
+	oneUs.label = "1us";
+	OpenSampler(oneUs, outputDir);
+	s_samplers.emplace(oneUs.label, std::move(oneUs));
+
+	SamplerState quarterUs;
+	quarterUs.interval = NanoSeconds(1000);
+	quarterUs.label = "0p25us";
+	OpenSampler(quarterUs, outputDir);
+	s_samplers.emplace(quarterUs.label, std::move(quarterUs));
+
+	s_running = true;
+	ScheduleNext("1us");
+	ScheduleNext("0p25us");
+}
+
+void
+UbPortMetricsSampler::Stop()
+{
+	for (auto& entry : s_samplers) {
+		if (entry.second.stream.is_open()) {
+			entry.second.stream.flush();
+			entry.second.stream.close();
+		}
+		entry.second.lastTxBytes.clear();
+	}
+	s_running = false;
+}
+
+bool
+UbPortMetricsSampler::IsRunning()
+{
+	return s_running;
+}
+
+void
+UbPortMetricsSampler::ScheduleNext(const std::string& label)
+{
+	auto it = s_samplers.find(label);
+	if (it == s_samplers.end()) {
+		return;
+	}
+	Simulator::Schedule(it->second.interval, &UbPortMetricsSampler::Sample, label);
+}
+
+void
+UbPortMetricsSampler::Sample(const std::string& label)
+{
+	if (!s_running) {
+		return;
+	}
+	auto it = s_samplers.find(label);
+	if (it == s_samplers.end()) {
+		std::cout << "Invalid sampler label: " << label << std::endl;
+		return;
+	}
+	SamplerState& sampler = it->second;
+	if (!sampler.stream.is_open()) {
+		std::cout << "Sampler stream is not open: " << label << std::endl;
+		return;
+	}
+
+	const Time now = Simulator::Now();
+	const double nowUs = now.GetSeconds() * 1e6;
+	const double windowUs = sampler.interval.GetSeconds() * 1e6;
+	const double windowNanoSeconds = sampler.interval.GetNanoSeconds();
+
+	for (uint32_t nodeIndex = 0; nodeIndex < NodeList::GetNNodes(); ++nodeIndex) {
+		Ptr<Node> node = NodeList::GetNode(nodeIndex);
+		if (PeekPointer(node) == 0) {
+			std::cout << "Node " << nodeIndex << " is not a UbSwitch" << std::endl;
+			continue;
+		}
+		Ptr<UbSwitch> sw = node->GetObject<UbSwitch>();
+		Ptr<UbQueueManager> queueManager;
+		if (PeekPointer(sw) != 0) {
+			queueManager = sw->GetQueueManager();
+		}
+
+		const uint32_t deviceCount = node->GetNDevices();
+		for (uint32_t deviceIndex = 0; deviceIndex < deviceCount; ++deviceIndex) {
+			Ptr<UbPort> port = DynamicCast<UbPort>(node->GetDevice(deviceIndex));
+			if (PeekPointer(port) == 0) {
+				std::cout << "Node " << nodeIndex << " device " << deviceIndex << " is not a UbPort" << std::endl;
+				continue;
+			}
+
+			const uint32_t portId = port->GetIfIndex();
+			const uint64_t key = MakePortKey(node->GetId(), portId);
+			const uint64_t currentTxBytes = port->GetTxBytes();
+			uint64_t& lastTxBytes = sampler.lastTxBytes[key];
+			const uint64_t deltaBytes = (currentTxBytes >= lastTxBytes) ? (currentTxBytes - lastTxBytes) : currentTxBytes;
+			lastTxBytes = currentTxBytes;
+
+			uint64_t queueBytes = 0;
+			if (PeekPointer(queueManager) != 0) {
+				queueBytes = queueManager->GetTotalOutPortBufferUsed(portId);
+			} else if (PeekPointer(port->GetUbQueue()) != 0) {
+				std::cout << "Node " << nodeIndex << " has no queueManager" << std::endl;
+				queueBytes = port->GetUbQueue()->GetCurrentBytes();
+			}else {
+				std::cout << "Node " << nodeIndex << " device " << deviceIndex << " has no queue" << std::endl;
+			}
+
+			const uint64_t capacityBps = port->GetDataRate().GetBitRate();
+			double utilization = 0.0;
+			if (capacityBps > 0 && windowNanoSeconds > 0.0) {
+				utilization = (static_cast<double>(deltaBytes) * 8.0) /
+				              (static_cast<double>(capacityBps) * windowNanoSeconds/1e9);
+			}
+
+			sampler.stream << nowUs
+			               << ',' << windowUs
+			               << ',' << node->GetId()
+			               << ',' << portId
+			               << ',' << FormatGigaBitsPerSecond(capacityBps)
+			               << ',' << deltaBytes
+			               << ',' << FormatUtilizationValue(utilization)
+			               << ',' << queueBytes
+			               << '\n';
+		}
+	}
+
+	sampler.stream.flush();
+	ScheduleNext(label);
+}
 static UbAlpsPacketTracker::FlowDropStats&
 GetFlowDropStatsRef(UbAlpsPacketTracker::GlobalDropStats& stats, UbAlpsPacketTracker::FlowType type)
 {

@@ -432,7 +432,7 @@ bool UbHostAlps::TrySlowDownForALPS(Time maxBaseDelay)
     const uint64_t maxRateBps = std::max<uint64_t>(1, m_maxRate.GetBitRate());
     const uint64_t minRateBps = std::min<uint64_t>(m_minRate.GetBitRate(), maxRateBps);
     const uint64_t currentBps = std::min<uint64_t>(maxRateBps, std::max<uint64_t>(minRateBps, m_currentRate.GetBitRate()));
-    const uint64_t newRateBps = std::max<uint64_t>(minRateBps, currentBps*0.8);
+    const uint64_t newRateBps = std::max<uint64_t>(minRateBps, currentBps*0.75);
     //计算当前数据包还有多少数据没发送
     uint64_t leftBits=(double)(currentBps)/1000000000*
     ((m_nextSendTime.GetNanoSeconds()-Simulator::Now().GetNanoSeconds())>=0

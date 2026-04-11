@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>NS-3 UB Topology 3D Viewer - Stage 2</title>
+    <link rel="stylesheet" href="./src/styles.css" />
+    <script type="importmap">
+      {
+        "imports": {
+          "three": "./vendor/three/build/three.module.js",
+          "three/addons/": "./vendor/three/examples/jsm/"
+        }
+      }
+    </script>
+  </head>
+  <body>
+    <div id="app">
+      <header class="toolbar">
+        <h1>NS-3 UB Topology Viewer (Stage 2)</h1>
+        <div class="hint">拖动: 左键旋转 | 右键平移 | 滚轮缩放</div>
+      </header>
+
+      <main class="canvas-wrap">
+        <canvas id="topology-canvas"></canvas>
+
+        <aside class="panel" id="side-panel">
+          <div class="panel-topbar">
+            <strong>控制面板</strong>
+            <button id="panel-toggle" type="button" aria-expanded="true">收起</button>
+          </div>
+
+          <div class="panel-body" id="panel-body">
+          <h2>回放控制</h2>
+          <div class="controls">
+            <label class="field">
+              指标
+              <select id="metric-select">
+                <option value="queue">队列长度（越高越红）</option>
+                <option value="utilization">带宽利用率（越高越绿）</option>
+              </select>
+            </label>
+
+            <div class="row">
+              <button id="play-btn" type="button">播放</button>
+              <button id="pause-btn" type="button">暂停</button>
+            </div>
+
+            <label class="field">
+              时间轴
+              <input id="time-slider" type="range" min="0" max="0" value="0" step="1" />
+            </label>
+            <div class="time-label" id="time-label">t = 0 us</div>
+            <div class="time-label" id="playback-status">status: init</div>
+
+            <details class="debug-box" open>
+              <summary>调试信息</summary>
+              <pre id="debug-log">debug: waiting...</pre>
+            </details>
+          </div>
+
+          <h2>图层说明</h2>
+          <ul>
+            <li><span class="dot host"></span>Host</li>
+            <li><span class="dot tor"></span>ToR</li>
+            <li><span class="dot du"></span>DU</li>
+            <li><span class="dot l1"></span>L1</li>
+            <li><span class="dot hrs"></span>HRS</li>
+          </ul>
+
+          <h2>节点交互（预留）</h2>
+          <div class="node-info" id="node-info">点击节点后在这里显示详情</div>
+
+          <div class="stats" id="stats">加载中...</div>
+          </div>
+        </aside>
+      </main>
+    </div>
+
+    <script type="module" src="./src/main.js?v=20260411-debug4"></script>
+  </body>
+</html>
