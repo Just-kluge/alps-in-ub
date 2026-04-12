@@ -192,6 +192,7 @@ class UbTaskFctMonitor
 	{
 		uint32_t nodeId = 0;
 		uint32_t taskId = 0;
+		int64_t dstNodeId = -1;
 		int64_t startNs = -1;
 		int64_t endNs = -1;
 		int64_t fctNs = -1;
@@ -201,6 +202,7 @@ class UbTaskFctMonitor
 	static void Start(const std::string& outputDir);
 	static void Stop();
 	static bool IsRunning();
+	static void RecordTaskDestination(uint32_t taskId, uint32_t dstNodeId);
 	static void RecordTaskStart(uint32_t nodeId, uint32_t taskId);
 	static void RecordTaskComplete(uint32_t nodeId, uint32_t taskId);
 
@@ -211,6 +213,7 @@ class UbTaskFctMonitor
  	static int64_t ComputePercentileFct(const std::vector<TaskFctRecord>& records, double percentile);
 
 	static std::unordered_map<uint64_t, Time> s_taskStartTimes;
+	static std::unordered_map<uint32_t, uint32_t> s_taskDestNodes;
 	static std::vector<TaskFctRecord> s_completedRecords;
 	static std::vector<TaskFctRecord> s_anomalyRecords;
 	static std::string s_outputFile;

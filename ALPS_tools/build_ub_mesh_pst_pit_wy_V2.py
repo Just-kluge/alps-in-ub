@@ -62,9 +62,9 @@ L1_PER_LRS = 4
 # HRS 节点总数（High-level Relay Switch，跨 rack 汇聚核心）。
 HRS_NUM = 4
 # 同 rack 不同列路径的权重缩放（相较于同列路径），用于 ALPS 路径选择概率计算。
-SAME_RACK_DIFF_COL_WEIGHT=0.75
+SAME_RACK_DIFF_COL_WEIGHT=0.5
 # 同 pod 跨 rack 路径的权重缩放
-SAME_POD_DIFF_RACK_WEIGHT=0.5   
+SAME_POD_DIFF_RACK_WEIGHT=0.3   
 
 # key: (rack_0based, col_0based), value: Index 列表
 PORT_INDEX_MAP = {

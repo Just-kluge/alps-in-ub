@@ -940,6 +940,7 @@ vector<TrafficRecord> UbUtils::ReadTrafficCSV(const string &filename)
         if (record.opType == "URMA_WRITE") {
             UbAlpsPacketTracker::RecordPlannedFlow(record.sourceNode, record.destNode,record.taskId);
             UbAlpsNodeReceiveTracker::RecordTask(record.destNode, record.taskId);
+            UbTaskFctMonitor::RecordTaskDestination(record.taskId, record.destNode);
         }
         UbTrafficGen::Get()->SetPhaseDepend(record.phaseId, record.taskId);
         records.push_back(record);

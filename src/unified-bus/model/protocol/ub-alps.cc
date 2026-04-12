@@ -432,12 +432,15 @@ bool UbHostAlps::TrySlowDownForALPS(Time maxBaseDelay)
     const uint64_t maxRateBps = std::max<uint64_t>(1, m_maxRate.GetBitRate());
     const uint64_t minRateBps = std::min<uint64_t>(m_minRate.GetBitRate(), maxRateBps);
     const uint64_t currentBps = std::min<uint64_t>(maxRateBps, std::max<uint64_t>(minRateBps, m_currentRate.GetBitRate()));
-    const uint64_t newRateBps = std::max<uint64_t>(minRateBps, currentBps*0.7);
+    //更新当前速率以及期望速率
+    m_baseRate = DataRate(currentBps);
+    const uint64_t newRateBps = std::max<uint64_t>(minRateBps, currentBps*0.65);
+    m_currentRate = DataRate(newRateBps);
     //计算当前数据包还有多少数据没发送
     uint64_t leftBits=(double)(currentBps)/1000000000*
     ((m_nextSendTime.GetNanoSeconds()-Simulator::Now().GetNanoSeconds())>=0
     ?m_nextSendTime.GetNanoSeconds()-Simulator::Now().GetNanoSeconds():0);
-    m_currentRate = DataRate(newRateBps);
+    
     m_consecutiveSpeedups = 0;
      // 根据新的发送速率和剩余窗口计算下次发送时间
     uint32_t remainingTimeNs = leftBits * 1000000000 / newRateBps;
@@ -445,6 +448,7 @@ bool UbHostAlps::TrySlowDownForALPS(Time maxBaseDelay)
     //调整maxBaseDelay的时候m_nextSlowdownTime也会进行变动
     const Time cooldown = std::max(NanoSeconds(1), maxBaseDelay);
     m_nextSlowdownTime = Simulator::Now() + cooldown;
+    //m_nextSpeedupTime = Simulator::Now() + cooldown /4;
     return true;
 
 

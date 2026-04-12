@@ -43,6 +43,7 @@ std::string UbPortMetricsSampler::s_outputDir;
 bool UbPortMetricsSampler::s_running = false;
 
 std::unordered_map<uint64_t, Time> UbTaskFctMonitor::s_taskStartTimes;
+std::unordered_map<uint32_t, uint32_t> UbTaskFctMonitor::s_taskDestNodes;
 std::vector<UbTaskFctMonitor::TaskFctRecord> UbTaskFctMonitor::s_completedRecords;
 std::vector<UbTaskFctMonitor::TaskFctRecord> UbTaskFctMonitor::s_anomalyRecords;
 std::string UbTaskFctMonitor::s_outputFile;
@@ -272,6 +273,7 @@ UbTaskFctMonitor::Start(const std::string& outputDir)
 	EnsureOutputDirectory(outputDir);
 	s_outputFile = BuildOutputPath(outputDir);
 	s_taskStartTimes.clear();
+	s_taskDestNodes.clear();
 	s_completedRecords.clear();
 	s_anomalyRecords.clear();
 	s_running = true;
@@ -319,6 +321,8 @@ UbTaskFctMonitor::Stop()
 		TaskFctRecord record;
 		record.nodeId = static_cast<uint32_t>(entry.first >> 32);
 		record.taskId = static_cast<uint32_t>(entry.first & 0xffffffffu);
+		auto dstIt = s_taskDestNodes.find(record.taskId);
+		record.dstNodeId = (dstIt == s_taskDestNodes.end()) ? -1 : static_cast<int64_t>(dstIt->second);
 		record.startNs = entry.second.GetNanoSeconds();
 		record.status = "incomplete";
 		s_anomalyRecords.push_back(record);
@@ -361,11 +365,12 @@ UbTaskFctMonitor::Stop()
 	       << ",max_fct_ns=" << maxFct
 	       << ",anomaly=" << s_anomalyRecords.size()
 	       << "\n";
-	stream << "nodeId,taskId,start_ns,end_ns,fct_ns,status\n";
+	stream << "nodeId,taskId,dstNodeId,start_ns,end_ns,fct_ns,status\n";
 
 	for (const auto& record : s_completedRecords) {
 		stream << record.nodeId << ','
 		       << record.taskId << ','
+		       << record.dstNodeId << ','
 		       << record.startNs << ','
 		       << record.endNs << ','
 		       << record.fctNs << ','
@@ -374,6 +379,7 @@ UbTaskFctMonitor::Stop()
 	for (const auto& record : s_anomalyRecords) {
 		stream << record.nodeId << ','
 		       << record.taskId << ','
+		       << record.dstNodeId << ','
 		       << record.startNs << ','
 		       << record.endNs << ','
 		       << record.fctNs << ','
@@ -383,6 +389,7 @@ UbTaskFctMonitor::Stop()
 	stream.close();
 
 	s_taskStartTimes.clear();
+	s_taskDestNodes.clear();
 	s_completedRecords.clear();
 	s_anomalyRecords.clear();
 	s_running = false;
@@ -392,6 +399,12 @@ bool
 UbTaskFctMonitor::IsRunning()
 {
 	return s_running;
+}
+
+void
+UbTaskFctMonitor::RecordTaskDestination(uint32_t taskId, uint32_t dstNodeId)
+{
+	s_taskDestNodes[taskId] = dstNodeId;
 }
 
 void
@@ -418,6 +431,8 @@ UbTaskFctMonitor::RecordTaskComplete(uint32_t nodeId, uint32_t taskId)
 		TaskFctRecord missingStart;
 		missingStart.nodeId = nodeId;
 		missingStart.taskId = taskId;
+		auto dstIt = s_taskDestNodes.find(taskId);
+		missingStart.dstNodeId = (dstIt == s_taskDestNodes.end()) ? -1 : static_cast<int64_t>(dstIt->second);
 		missingStart.endNs = endNs;
 		missingStart.status = "missing_start";
 		s_anomalyRecords.push_back(missingStart);
@@ -427,6 +442,8 @@ UbTaskFctMonitor::RecordTaskComplete(uint32_t nodeId, uint32_t taskId)
 	TaskFctRecord record;
 	record.nodeId = nodeId;
 	record.taskId = taskId;
+	auto dstIt = s_taskDestNodes.find(taskId);
+	record.dstNodeId = (dstIt == s_taskDestNodes.end()) ? -1 : static_cast<int64_t>(dstIt->second);
 	record.startNs = it->second.GetNanoSeconds();
 	record.endNs = endNs;
 	record.fctNs = std::max<int64_t>(0, endNs - record.startNs);
@@ -604,11 +621,11 @@ UbAlpsPacketTracker::EstimateInitialRateByType(uint32_t srcNode,
 	uint64_t initRateBps = std::max<uint64_t>(1, (typeBudgetBps / typeFlowCount) * tpTypeFlowCount);
 	if (tpType == FlowType::SAME_COL)
 	{
-		initRateBps = std::max<uint64_t>(1, static_cast<uint64_t>(initRateBps * 0.4));
+		initRateBps = std::max<uint64_t>(1, static_cast<uint64_t>(initRateBps * 0.8));
 	}
 	else
 	{
-		initRateBps = std::max<uint64_t>(1, (initRateBps * 6) / 10);
+		initRateBps = std::max<uint64_t>(1, (initRateBps * 5.5) / 10);
 	}
 
 	return DataRate(initRateBps);
