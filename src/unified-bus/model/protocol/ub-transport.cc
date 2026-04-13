@@ -445,7 +445,7 @@ void UbTransportChannel::AddAplsTagForDatapacketOnHost(Ptr<Packet> p){
          std::cerr << "[ERROR] No valid PST entry for ACK! reversepstkey:" << PstKey << std::endl;
          return;
      }
-         uint32_t path_id = rt->GetPidOnHostForPacketSpraying(pstEntry);//
+         uint32_t path_id = rt->GetPidOnHostForPacketSpraying(pstEntry,p->GetSize());//
          uint32_t path_length = 0;
          for (const auto* pitEntry : pstEntry->PitEntries) {
             if (pitEntry && pitEntry->GetPathId() == path_id) {
@@ -503,7 +503,7 @@ void UbTransportChannel::AddAplsTagForRetransPacketOnHost(Ptr<Packet> p ,uint32_
          std::cerr << "[ERROR] No valid PST entry for ACK! reversepstkey:" << PstKey << std::endl;
          return;
      }
-         uint32_t path_id = rt->GetPidOnHostForPacketSpraying(pstEntry);//
+         uint32_t path_id = rt->GetPidOnHostForPacketSpraying(pstEntry,p->GetSize());//
          uint32_t path_length = 0;
          for (const auto* pitEntry : pstEntry->PitEntries) {
             if (pitEntry && pitEntry->GetPathId() == path_id) {
@@ -797,7 +797,7 @@ void UbTransportChannel::RecvTpAckForAlps(Ptr<Packet> p)
                                                                    delayList[idx]);
                     }
                 }
-
+                pitEntry->ResetVirtualLatency();
                 pitEntry->UpdateLastUpdatedTime(Simulator::Now());
                 break;
             }

@@ -62,8 +62,12 @@ class AlpsPitEntry
     uint32_t baseLatency; // ALPS路径的基准时延，路径时延超过此值即视为拥塞
     uint32_t noQueueLatencyNs; // ALPS路径的无队列时延，不包含排队时延等
     Time lastUpdatedTime; // 上次更新时间
+    Time lastUsedTime; // 上次使用时间
     Time lastProbeTime; // 上次探测时间
+    double virtualLatencyNs; // 仅用于负载均衡的虚时延
     double weight;
+    static bool s_enableVirtualLatency;
+    static bool s_enablePathWeight;
     public:
     void SetPathId(uint32_t pathId) { this->pathId = pathId; }
     uint32_t GetPathId() const { return pathId; }
@@ -89,20 +93,43 @@ class AlpsPitEntry
     void UpdateLastUpdatedTime(Time lastUpdatedTime) { this->lastUpdatedTime = lastUpdatedTime; }
     Time GetLastUpdatedTime() const { return lastUpdatedTime; }
 
+    void UpdateLastUsedTime(Time lastUsedTime) { this->lastUsedTime = lastUsedTime; }
+    Time GetLastUsedTime() const { return lastUsedTime; }
     void UpdateLastProbeTime(Time lastProbeTime) { this->lastProbeTime = lastProbeTime; }
     Time GetLastProbeTime() const { return lastProbeTime; }
-    double GetWeight() const { return weight; }
+    static void SetEnableVirtualLatency(bool enable) { s_enableVirtualLatency = enable; }
+    static bool IsVirtualLatencyEnabled() { return s_enableVirtualLatency; }
+    static void SetEnablePathWeight(bool enable) { s_enablePathWeight = enable; }
+    static bool IsPathWeightEnabled() { return s_enablePathWeight; }
+    static void InitializeFeatureSwitchesFromConfig();
+    double GetVirtualLatencyNs() const { return virtualLatencyNs; }
+    void ResetVirtualLatency() { virtualLatencyNs = 0.0; }
+    void AddVirtualLatencyByPacketSize(uint32_t packetSizeBytes)
+    {
+      if (!s_enableVirtualLatency) {
+        return;
+      }
+      virtualLatencyNs += (static_cast<double>(packetSizeBytes) * 8.0) / static_cast<double>(PORT_RATE);
+    }
+    double GetWeight() const {
+      if(!s_enablePathWeight){
+      return 1.0;
+      }
+      return weight; 
+    }
     AlpsPitEntry() : pathId(0), length(0), reversePathId(0), baseLatency(0), noQueueLatencyNs(0)
     {
         nodes.clear();
         ports.clear();
         lastUpdatedTime = Seconds(0);
         lastProbeTime = Seconds(0);
+        virtualLatencyNs = 0.0;
     }
     AlpsPitEntry(uint32_t pathId, uint32_t length, std::vector<uint32_t> nodes, std::vector<uint32_t> ports, uint32_t reversePathId, uint32_t m_baseLatency, double weight) : pathId(pathId), length(length), reversePathId(reversePathId), nodes(nodes), ports(ports), weight(weight)
     {
         lastUpdatedTime = Seconds(0);
         lastProbeTime = Seconds(0);
+        virtualLatencyNs = 0.0;
         //调整maxBaseDelay的时候m_nextSlowdownTime也会进行变动，所以需要再次对调速间隔进行评估
         baseLatency = m_baseLatency+((length-2)*(PACKET_SIZE*8)/(PORT_RATE)+2*(PACKET_SIZE*8)/(HOST_PORT_RATE))*10; // 
         noQueueLatencyNs = m_baseLatency+(length-2)*(PACKET_SIZE*8)/(PORT_RATE)+2*(PACKET_SIZE*8)/(HOST_PORT_RATE);

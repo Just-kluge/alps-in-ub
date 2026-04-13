@@ -4,7 +4,7 @@
 #include "monitor/ub-monitor.h"
 #include <filesystem>
 #include <algorithm>
-
+#include "ns3/ub-alps-pst.h"
 using namespace std;
 using namespace ns3;
 namespace utils {
@@ -1005,6 +1005,24 @@ void UbUtils::SetComponentsAttribute(const string &filename)
     Config::SetDefault("ns3::ConfigStore::Mode", StringValue("Load"));
     ConfigStore config;
     config.ConfigureDefaults();
+        ns3::AlpsPitEntry::InitializeFeatureSwitchesFromConfig();
+
+    DoubleValue speedupCooldownDivisor(8.0);
+    GlobalValue::GetValueByNameFailSafe("UB_ALPS_SPEEDUP_COOLDOWN_DIVISOR", speedupCooldownDivisor);
+    DoubleValue slowdownCooldownFactor(0.5);
+    GlobalValue::GetValueByNameFailSafe("UB_ALPS_SLOWDOWN_COOLDOWN_FACTOR", slowdownCooldownFactor);
+    DoubleValue slowdownRateDecayFactor(0.6);
+    GlobalValue::GetValueByNameFailSafe("UB_ALPS_SLOWDOWN_RATE_DECAY_FACTOR", slowdownRateDecayFactor);
+    DoubleValue initialRateSameColFactor(0.7);
+    GlobalValue::GetValueByNameFailSafe("UB_ALPS_INITIAL_RATE_SAME_COL_FACTOR", initialRateSameColFactor);
+    DoubleValue initialRateOtherFactor(0.55);
+    GlobalValue::GetValueByNameFailSafe("UB_ALPS_INITIAL_RATE_OTHER_FACTOR", initialRateOtherFactor);
+
+    NS_LOG_UNCOND("[ALPS_PARAM] UB_ALPS_SPEEDUP_COOLDOWN_DIVISOR=" << speedupCooldownDivisor.Get()
+                  << ", UB_ALPS_SLOWDOWN_COOLDOWN_FACTOR=" << slowdownCooldownFactor.Get()
+                  << ", UB_ALPS_SLOWDOWN_RATE_DECAY_FACTOR=" << slowdownRateDecayFactor.Get());
+    NS_LOG_UNCOND("[ALPS_PARAM] UB_ALPS_INITIAL_RATE_SAME_COL_FACTOR=" << initialRateSameColFactor.Get()
+                  << ", UB_ALPS_INITIAL_RATE_OTHER_FACTOR=" << initialRateOtherFactor.Get());
 }
 
 void UbUtils::TopoTraceConnect()

@@ -8,6 +8,7 @@
 #include <cerrno>
 #include <sstream>
 #include <vector>
+#include "ns3/global-value.h"
 #include "ns3/ub-transport.h"
 #include "ns3/ub-port.h"
 #include "ns3/ub-switch.h"
@@ -63,6 +64,15 @@ FormatGigaBitsPerSecond(uint64_t bps)
 	std::ostringstream oss;
 	oss << std::fixed << std::setprecision(6) << static_cast<double>(bps) / 1e9;
 	return oss.str();
+}
+static double
+GetAlpsConfigDouble(const char* name, double defaultValue)
+{
+	DoubleValue value(defaultValue);
+	if (GlobalValue::GetValueByNameFailSafe(name, value)) {
+		return value.Get();
+	}
+	return defaultValue;
 }
 
 uint64_t
@@ -621,11 +631,13 @@ UbAlpsPacketTracker::EstimateInitialRateByType(uint32_t srcNode,
 	uint64_t initRateBps = std::max<uint64_t>(1, (typeBudgetBps / typeFlowCount) * tpTypeFlowCount);
 	if (tpType == FlowType::SAME_COL)
 	{
-		initRateBps = std::max<uint64_t>(1, static_cast<uint64_t>(initRateBps * 0.8));
+		const double sameColFactor = GetAlpsConfigDouble("UB_ALPS_INITIAL_RATE_SAME_COL_FACTOR", 0.8);
+		initRateBps = std::max<uint64_t>(1, static_cast<uint64_t>(initRateBps * sameColFactor));
 	}
 	else
 	{
-		initRateBps = std::max<uint64_t>(1, (initRateBps * 5.5) / 10);
+		const double otherFactor = GetAlpsConfigDouble("UB_ALPS_INITIAL_RATE_OTHER_FACTOR", 0.6);
+		initRateBps = std::max<uint64_t>(1, static_cast<uint64_t>(initRateBps * otherFactor));
 	}
 
 	return DataRate(initRateBps);

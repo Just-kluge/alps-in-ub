@@ -16,7 +16,7 @@
 #include "ns3/ub-port.h"
 #include "ns3/ub-alps.h"
 #include "ns3/ub-utils.h"
-
+#include "ns3/global-value.h"
 
 namespace ns3 {
 
@@ -31,6 +31,45 @@ static uint32_t GetRealHint(const uint32_t hint, const uint32_t ccUnit)
         return realHint;
     }
 }
+static double
+GetAlpsConfigDouble(const char* name, double defaultValue)
+{
+    DoubleValue value(defaultValue);
+    if (GlobalValue::GetValueByNameFailSafe(name, value)) {
+        return value.Get();
+    }
+    return defaultValue;
+}
+
+GlobalValue g_alpsSpeedupCooldownDivisor(
+    "UB_ALPS_SPEEDUP_COOLDOWN_DIVISOR",
+    "ALPS speedup cooldown divisor used by UbHostAlps::TrySpeedUpForALPS.",
+    DoubleValue(8.0),
+    MakeDoubleChecker<double>(1.0));
+
+GlobalValue g_alpsSlowdownCooldownFactor(
+    "UB_ALPS_SLOWDOWN_COOLDOWN_FACTOR",
+    "ALPS slowdown cooldown divisor used by UbHostAlps::TrySlowDownForALPS.",
+    DoubleValue(1.0),
+    MakeDoubleChecker<double>(0.000001, 1000000.0));
+
+GlobalValue g_alpsSlowdownRateDecayFactor(
+    "UB_ALPS_SLOWDOWN_RATE_DECAY_FACTOR",
+    "ALPS rate decay factor used by UbHostAlps::TrySlowDownForALPS.",
+    DoubleValue(0.6),
+    MakeDoubleChecker<double>(0.0, 1.0));
+
+GlobalValue g_alpsInitialRateSameColFactor(
+    "UB_ALPS_INITIAL_RATE_SAME_COL_FACTOR",
+    "ALPS initial rate multiplier for same-col flows.",
+    DoubleValue(0.7),
+    MakeDoubleChecker<double>(0.0, 1.0));
+
+GlobalValue g_alpsInitialRateOtherFactor(
+    "UB_ALPS_INITIAL_RATE_OTHER_FACTOR",
+    "ALPS initial rate multiplier for non-same-col flows.",
+    DoubleValue(0.55),
+    MakeDoubleChecker<double>(0.0, 1.0));
 
 NS_LOG_COMPONENT_DEFINE("UbAlps");
 NS_OBJECT_ENSURE_REGISTERED(UbAlps);
@@ -417,7 +456,8 @@ bool UbHostAlps::TrySpeedUpForALPS(Time maxBaseDelay)
      uint32_t remainingTimeNs = leftBits * 1000000000 / newRateBps;
     UpdateNextSendTimeForRateAdjustment(remainingTimeNs);
     const Time cooldown = std::max(NanoSeconds(1), maxBaseDelay);
-    m_nextSpeedupTime = Simulator::Now() + cooldown /8;
+    const double cooldownDivisor = std::max(1.0, GetAlpsConfigDouble("UB_ALPS_SPEEDUP_COOLDOWN_DIVISOR", 8.0));
+    m_nextSpeedupTime = Simulator::Now() + cooldown / cooldownDivisor;
     return true;
 }
 
@@ -434,7 +474,8 @@ bool UbHostAlps::TrySlowDownForALPS(Time maxBaseDelay)
     const uint64_t currentBps = std::min<uint64_t>(maxRateBps, std::max<uint64_t>(minRateBps, m_currentRate.GetBitRate()));
     //更新当前速率以及期望速率
     m_baseRate = DataRate(currentBps);
-    const uint64_t newRateBps = std::max<uint64_t>(minRateBps, currentBps*0.65);
+    const double slowdownFactor = GetAlpsConfigDouble("UB_ALPS_SLOWDOWN_RATE_DECAY_FACTOR", 0.65);
+    const uint64_t newRateBps = std::max<uint64_t>(minRateBps, static_cast<uint64_t>(currentBps * slowdownFactor));
     m_currentRate = DataRate(newRateBps);
     //计算当前数据包还有多少数据没发送
     uint64_t leftBits=(double)(currentBps)/1000000000*
@@ -447,7 +488,8 @@ bool UbHostAlps::TrySlowDownForALPS(Time maxBaseDelay)
     UpdateNextSendTimeForRateAdjustment(remainingTimeNs);
     //调整maxBaseDelay的时候m_nextSlowdownTime也会进行变动
     const Time cooldown = std::max(NanoSeconds(1), maxBaseDelay);
-    m_nextSlowdownTime = Simulator::Now() + cooldown;
+    const double cooldownFactor = std::max(0.000001, GetAlpsConfigDouble("UB_ALPS_SLOWDOWN_COOLDOWN_FACTOR",1));
+    m_nextSlowdownTime = Simulator::Now() + cooldown / cooldownFactor;
     //m_nextSpeedupTime = Simulator::Now() + cooldown /4;
     return true;
 

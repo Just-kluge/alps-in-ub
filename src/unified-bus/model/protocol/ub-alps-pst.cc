@@ -1,9 +1,44 @@
 // SPDX-License-Identifier: GPL-2.0-only
 #include "ns3/ub-alps-pst.h"
 #include "ns3/ub-routing-process.h"  // 这里包含完整定义
-
+#include "ns3/global-value.h"
+#include "ns3/boolean.h"
+#include "ns3/log.h"
 namespace ns3 {
+NS_LOG_COMPONENT_DEFINE("UbAlpsPst");
 
+GlobalValue g_alpsEnableVirtualLatency(
+    "UB_ALPS_ENABLE_VIRTUAL_LATENCY",
+    "Enable virtual latency in AlpsPitEntry for load balancing.",
+    BooleanValue(false),
+    MakeBooleanChecker());
+
+GlobalValue g_alpsEnablePathWeight(
+    "UB_ALPS_ENABLE_PATH_WEIGHT",
+    "Enable path weight in AlpsPitEntry weight calculation.",
+    BooleanValue(false),
+    MakeBooleanChecker());
+
+bool AlpsPitEntry::s_enableVirtualLatency = false;// 默认不启用虚时延
+bool AlpsPitEntry::s_enablePathWeight= false; // 默认不启用路径权重
+
+void AlpsPitEntry::InitializeFeatureSwitchesFromConfig()
+{
+    BooleanValue virtualLatencyValue(false);
+    if (GlobalValue::GetValueByNameFailSafe("UB_ALPS_ENABLE_VIRTUAL_LATENCY", virtualLatencyValue)) {
+        s_enableVirtualLatency = virtualLatencyValue.Get();
+    }
+
+    BooleanValue pathWeightValue(false);
+    if (GlobalValue::GetValueByNameFailSafe("UB_ALPS_ENABLE_PATH_WEIGHT", pathWeightValue)) {
+        s_enablePathWeight = pathWeightValue.Get();
+    }
+
+    NS_LOG_UNCOND("[ALPS_FEATURE_SWITCH] s_enableVirtualLatency="
+                  << (s_enableVirtualLatency ? "true" : "false")
+                  << ", s_enablePathWeight="
+                  << (s_enablePathWeight ? "true" : "false"));
+}
 uint32_t AlpsPitEntry::GetRealTimeLatency( Ptr<UbRoutingProcess>  ubRoutingProcess)const 
 {
     uint32_t RealTimeLatency = noQueueLatencyNs;

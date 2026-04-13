@@ -124,7 +124,7 @@ public:
        * @param pstEntry 
        * @return uint32_t 
        */
-    uint32_t GetPidOnHostForPacketSpraying( AlpsPstEntry* pstEntry);
+    uint32_t GetPidOnHostForPacketSpraying( AlpsPstEntry* pstEntry,uint32_t packet_size);
     /**
      * @brief 在收到ACK时获取路径此时的瞬时时延，然后与ACK测量的结果进行比较（输出到控制台或者进行误差统计）
      * 输入：路径ID，源节点id，目的节点id
