@@ -102,6 +102,7 @@ class AlpsPitEntry
       InflightPacketNumbers--;
       //std::cout<<"PathID: " << pathId << ", InflightPacketNumbers after ack: " << InflightPacketNumbers << std::endl;
     }
+    uint32_t GetInflightPacketNumbers() const { return InflightPacketNumbers; }
     void UpdateLastUsedTime(Time lastUsedTime) { this->lastUsedTime = lastUsedTime; }
     Time GetLastUsedTime() const { return lastUsedTime; }
     void UpdateLastProbeTime(Time lastProbeTime) { this->lastProbeTime = lastProbeTime; }
@@ -141,10 +142,18 @@ class AlpsPitEntry
         lastProbeTime = Seconds(0);
         virtualLatencyNs = 0.0;
         //调整maxBaseDelay的时候m_nextSlowdownTime也会进行变动，所以需要再次对调速间隔进行评估
-        baseLatency = m_baseLatency+((length-2)*(PACKET_SIZE*8)/(PORT_RATE)+2*(PACKET_SIZE*8)/(HOST_PORT_RATE))*10; // 
         noQueueLatencyNs = m_baseLatency+(length-2)*(PACKET_SIZE*8)/(PORT_RATE)+2*(PACKET_SIZE*8)/(HOST_PORT_RATE);
+         //基准时延，超过这个 路径就可以被认为拥塞了------此处还附加了权重的影响
+        baseLatency = noQueueLatencyNs+GetTolerantlantency(length)*sqrt(weight); // 
+        //std::cout << "PathID: " << pathId << ", noQueueLatencyNs: " << noQueueLatencyNs << ", baseLatency: " << baseLatency <<"weight:"<< weight << std::endl;
         InflightPacketNumbers = 0;
     }
+     
+    //计算当前每个交换机出端口容忍K个数据包排队的总排队时延
+    uint32_t GetTolerantlantency(uint32_t m_length) const {
+     return ((m_length-2)*(PACKET_SIZE*8)/(PORT_RATE)+2*(PACKET_SIZE*8)/(HOST_PORT_RATE))* 5 ; // 这里假设每个交换机出端口最多容忍5个数据包排队，超过这个排队时延就视为拥塞了
+    }
+
     
 
     void Print(std::ostream& os) const
