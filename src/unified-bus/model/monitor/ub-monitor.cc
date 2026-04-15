@@ -9,6 +9,7 @@
 #include <sstream>
 #include <vector>
 #include "ns3/global-value.h"
+#include "ns3/boolean.h"
 #include "ns3/ub-transport.h"
 #include "ns3/ub-port.h"
 #include "ns3/ub-switch.h"
@@ -20,6 +21,12 @@
 namespace ns3 {
 
 NS_LOG_COMPONENT_DEFINE("UbMonitor");
+
+GlobalValue g_alpsDropStatsReportScheduled(
+	"UB_ALPS_DROP_STATS_REPORT_SCHEDULED",
+	"Enable periodic ALPS drop stats reporting.",
+	BooleanValue(true),
+	MakeBooleanChecker());
 
 std::unordered_map<uint32_t, UbAlpsPacketTracker::FlowTypeCounters>
 	UbAlpsPacketTracker::s_nodeFlowTypeCounters;
@@ -500,6 +507,15 @@ UbAlpsPacketTracker::ResetGlobalFlowTypeStats()
 	s_windowDropStats = GlobalDropStats{};
 	s_lastDropStatsReportTime = Seconds(0);
 	s_totalSwitchDroppedPkts = 0;
+}
+
+void
+UbAlpsPacketTracker::InitializeFeatureSwitchesFromConfig()
+{
+	BooleanValue reportScheduledValue(true);
+	if (GlobalValue::GetValueByNameFailSafe("UB_ALPS_DROP_STATS_REPORT_SCHEDULED", reportScheduledValue)) {
+		s_dropStatsReportScheduled = reportScheduledValue.Get();
+	}
 }
 
 UbAlpsPacketTracker::FlowType

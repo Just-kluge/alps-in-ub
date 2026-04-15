@@ -1006,6 +1006,7 @@ void UbUtils::SetComponentsAttribute(const string &filename)
     ConfigStore config;
     config.ConfigureDefaults();
         ns3::AlpsPitEntry::InitializeFeatureSwitchesFromConfig();
+        ns3::UbAlpsPacketTracker::InitializeFeatureSwitchesFromConfig();
 
     DoubleValue speedupCooldownDivisor(8.0);
     GlobalValue::GetValueByNameFailSafe("UB_ALPS_SPEEDUP_COOLDOWN_DIVISOR", speedupCooldownDivisor);

@@ -51,6 +51,7 @@ class UbAlpsPacketTracker
 	};
 
 	static void ResetGlobalFlowTypeStats();
+	static void InitializeFeatureSwitchesFromConfig();
 	static FlowType ClassifyFlowType(uint32_t srcNode, uint32_t dstNode);
 	/**
 	 * @brief 记录一条“计划发送流”到全局统计中。

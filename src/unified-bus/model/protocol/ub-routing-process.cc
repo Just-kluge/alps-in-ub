@@ -459,11 +459,13 @@ uint32_t UbRoutingProcess::GetPidOnHostForPacketSpraying( AlpsPstEntry* pstEntry
         {
             pstEntry->PitEntries[k]->AddVirtualLatencyByPacketSize(packet_size);
             pstEntry->PitEntries[k]->UpdateLastUsedTime(Simulator::Now());
+            pstEntry->PitEntries[k]->RecordSendPacket();
             return pstEntry->PitEntries[k]->GetPathId();
         }
     }
      pstEntry->PitEntries[weights.size()-1]->AddVirtualLatencyByPacketSize(packet_size);
      pstEntry->PitEntries[weights.size()-1]->UpdateLastUsedTime(Simulator::Now());
+     pstEntry->PitEntries[weights.size()-1]->RecordSendPacket();
      return pstEntry->PitEntries[weights.size()-1]->GetPathId();         
 }
 

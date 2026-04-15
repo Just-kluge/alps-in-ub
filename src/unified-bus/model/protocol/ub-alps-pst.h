@@ -64,6 +64,7 @@ class AlpsPitEntry
     Time lastUpdatedTime; // 上次更新时间
     Time lastUsedTime; // 上次使用时间
     Time lastProbeTime; // 上次探测时间
+    uint32_t InflightPacketNumbers;// 当前路径上已发送但未收到ack的数据包数量,
     double virtualLatencyNs; // 仅用于负载均衡的虚时延
     double weight;
     static bool s_enableVirtualLatency;
@@ -92,7 +93,15 @@ class AlpsPitEntry
     uint32_t GetRealTimeLatency(Ptr<UbRoutingProcess> ubRoutingProcess) const ;
     void UpdateLastUpdatedTime(Time lastUpdatedTime) { this->lastUpdatedTime = lastUpdatedTime; }
     Time GetLastUpdatedTime() const { return lastUpdatedTime; }
+    void RecordSendPacket() {
+        InflightPacketNumbers++;
 
+        //std::cout<<"PathID: " << pathId << ", InflightPacketNumbers after send: " << InflightPacketNumbers << std::endl;
+    }
+    void RecordAckPacket() {
+      InflightPacketNumbers--;
+      //std::cout<<"PathID: " << pathId << ", InflightPacketNumbers after ack: " << InflightPacketNumbers << std::endl;
+    }
     void UpdateLastUsedTime(Time lastUsedTime) { this->lastUsedTime = lastUsedTime; }
     Time GetLastUsedTime() const { return lastUsedTime; }
     void UpdateLastProbeTime(Time lastProbeTime) { this->lastProbeTime = lastProbeTime; }
@@ -124,6 +133,7 @@ class AlpsPitEntry
         lastUpdatedTime = Seconds(0);
         lastProbeTime = Seconds(0);
         virtualLatencyNs = 0.0;
+        InflightPacketNumbers = 0;
     }
     AlpsPitEntry(uint32_t pathId, uint32_t length, std::vector<uint32_t> nodes, std::vector<uint32_t> ports, uint32_t reversePathId, uint32_t m_baseLatency, double weight) : pathId(pathId), length(length), reversePathId(reversePathId), nodes(nodes), ports(ports), weight(weight)
     {
@@ -133,6 +143,7 @@ class AlpsPitEntry
         //调整maxBaseDelay的时候m_nextSlowdownTime也会进行变动，所以需要再次对调速间隔进行评估
         baseLatency = m_baseLatency+((length-2)*(PACKET_SIZE*8)/(PORT_RATE)+2*(PACKET_SIZE*8)/(HOST_PORT_RATE))*10; // 
         noQueueLatencyNs = m_baseLatency+(length-2)*(PACKET_SIZE*8)/(PORT_RATE)+2*(PACKET_SIZE*8)/(HOST_PORT_RATE);
+        InflightPacketNumbers = 0;
     }
     
 

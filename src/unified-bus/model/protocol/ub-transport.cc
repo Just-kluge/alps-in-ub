@@ -799,6 +799,7 @@ void UbTransportChannel::RecvTpAckForAlps(Ptr<Packet> p)
                 }
                 pitEntry->ResetVirtualLatency();
                 pitEntry->UpdateLastUpdatedTime(Simulator::Now());
+                pitEntry->RecordAckPacket();
                 break;
             }
             //std::cout<<"pitEntry->GetRealLatency():"<<pitEntry->GetRealLatency()<<std::endl;
