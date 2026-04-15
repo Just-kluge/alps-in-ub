@@ -87,7 +87,10 @@ class AlpsPitEntry
 
     void SetBaseLatency(uint32_t baseLatency) { this->baseLatency = baseLatency; }
     uint32_t GetBaseLatency() const { return baseLatency; }
-
+     //
+    uint32_t GetMaxTolerableLatency() const {
+        return baseLatency + GetTolerantlantency(length)*sqrt(weight); // 这里的容忍时延也受权重影响，权重越大，容忍时延越大
+    }
     void SetNoQueueLatency(uint32_t noQueueLatency) { this->noQueueLatencyNs = noQueueLatency; }
     uint32_t GetNoQueueLatency() const { return noQueueLatencyNs; }
     uint32_t GetRealTimeLatency(Ptr<UbRoutingProcess> ubRoutingProcess) const ;
@@ -145,7 +148,7 @@ class AlpsPitEntry
         noQueueLatencyNs = m_baseLatency+(length-2)*(PACKET_SIZE*8)/(PORT_RATE)+2*(PACKET_SIZE*8)/(HOST_PORT_RATE);
          //基准时延，超过这个 路径就可以被认为拥塞了------此处还附加了权重的影响
         baseLatency = noQueueLatencyNs+GetTolerantlantency(length)*sqrt(weight); // 
-        //std::cout << "PathID: " << pathId << ", noQueueLatencyNs: " << noQueueLatencyNs << ", baseLatency: " << baseLatency <<"weight:"<< weight << std::endl;
+        //std::cout << "PathID: " << pathId << ", noQueueLatencyNs: " << noQueueLatencyNs << ", baseLatency: " << baseLatency<<"GetMaxTolerableLatency:"<<GetMaxTolerableLatency() <<"weight:"<< weight << std::endl;
         InflightPacketNumbers = 0;
     }
      
