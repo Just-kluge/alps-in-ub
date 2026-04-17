@@ -233,7 +233,7 @@ void UbUtils::TpRecvNotify(uint32_t packetUid, uint32_t psn, uint32_t src, uint3
     }
     string info = oss.str();
     string pktType = typeMap[type];
-    string fileName = trace_path + "runlog/AllPacketTrace_" + pktType + "_node_" + to_string(src) + ".tr";
+    string fileName = trace_path + "runlog/AllPacketTrace_" + pktType + "_node_" + to_string(dst) + ".tr";
     PrintTraceInfoNoTs(fileName, info);
 }
 
@@ -279,7 +279,7 @@ void UbUtils::LdstRecvNotify(uint32_t packetUid, uint32_t src, uint32_t dst, Pac
     }
     string info = oss.str();
     string pktType = typeMap[type];
-    string fileName = trace_path + "runlog/AllPacketTrace_" + pktType + "_node_" + to_string(src) + ".tr";
+    string fileName = trace_path + "runlog/AllPacketTrace_" + pktType + "_node_" + to_string(dst) + ".tr";
     PrintTraceInfoNoTs(fileName, info);
 }
 
