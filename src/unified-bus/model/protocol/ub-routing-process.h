@@ -14,6 +14,7 @@ namespace ns3 {
 class UbQueueManager;
 class UbController;
 class UbPacketQueue;
+class UbHostAlps;
 
 /**
  * @brief 查路由需要的相关参数
@@ -152,11 +153,11 @@ public:
      std::unordered_map<uint64_t, uint32_t> m_NodePortQueueDelayNs;
 
     // ALPS sender-side packet buffer APIs (step 4: declarations only).
-    void RecordAlpsSentPacket(uint32_t pid, const PendingPkt& pkt);
-    uint32_t GetAlpsAckedPacketSizeByPsn(uint32_t pid, uint32_t srcTpn, uint32_t ackPsn) const;
-    void HandleAlpsAckByPsn(uint32_t pid, uint32_t srcTpn, uint32_t ackPsn,uint32_t m_sport);
-    void SetTimeoutForLapsbypid(uint32_t pid, uint32_t srcTpn);
-    void HandleTimeoutForLapsbypid(uint32_t pid, uint32_t srcTpn);
+    void RecordAlpsSentPacket(uint32_t pid, const PendingPkt& pkt,Ptr<UbHostAlps> alps);
+
+    void HandleAlpsAckByPsn(uint32_t pid, uint32_t srcTpn, uint32_t ackPsn,uint32_t m_sport,Ptr<UbHostAlps> alps );
+    void SetTimeoutForLapsbypid(uint32_t pid, uint32_t srcTpn,Ptr<UbHostAlps> alps  );
+    void HandleTimeoutForLapsbypid(uint32_t pid, uint32_t srcTpn,Ptr<UbHostAlps> alps  );
     bool HasAlpsRetransPacket(uint32_t tpn) const;
     PendingPkt PopAlpsRetransPacket(uint32_t tpn);
 //============================================================================

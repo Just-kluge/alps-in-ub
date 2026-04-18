@@ -476,7 +476,8 @@ void UbTransportChannel::AddAplsTagForDatapacketOnHost(Ptr<Packet> p){
         auto routingProcess = NodeList::GetNode(m_nodeId)->GetObject<UbSwitch>()->GetRoutingProcess();
         //m_psnSndNxt就是数据包的psn
         PendingPkt pending(m_psnSndNxt, p->Copy(), m_tpn);
-        routingProcess->RecordAlpsSentPacket(alpsTag.GetPathId(), pending);
+        auto hostAlps = DynamicCast<UbHostAlps>(m_congestionCtrl);
+        routingProcess->RecordAlpsSentPacket(alpsTag.GetPathId(), pending, hostAlps);
 
 }
 void UbTransportChannel::AddAplsTagForRetransPacketOnHost(Ptr<Packet> p ,uint32_t psn){
@@ -537,7 +538,8 @@ void UbTransportChannel::AddAplsTagForRetransPacketOnHost(Ptr<Packet> p ,uint32_
         auto routingProcess = NodeList::GetNode(m_nodeId)->GetObject<UbSwitch>()->GetRoutingProcess();
         //
         PendingPkt pending(psn, p->Copy(), m_tpn);
-        routingProcess->RecordAlpsSentPacket(alpsTag.GetPathId(), pending);
+         auto hostAlps = DynamicCast<UbHostAlps>(m_congestionCtrl);
+        routingProcess->RecordAlpsSentPacket(alpsTag.GetPathId(), pending, hostAlps);
 
 }
 
@@ -810,17 +812,19 @@ void UbTransportChannel::RecvTpAckForAlps(Ptr<Packet> p)
             }
             //std::cout<<"pitEntry->GetRealLatency():"<<pitEntry->GetRealLatency()<<std::endl;
          }
-            const uint32_t ackedPacketSize =
-                RoutingProcess->GetAlpsAckedPacketSizeByPsn(packet_pid, m_tpn, ackPsn);
 
+             auto hostAlps = DynamicCast<UbHostAlps>(m_congestionCtrl);
             //都到这里来了似乎不用校验tpn了
-            RoutingProcess->HandleAlpsAckByPsn(packet_pid, m_tpn, ackPsn,m_sport);
+            RoutingProcess->HandleAlpsAckByPsn(packet_pid, m_tpn, ackPsn,m_sport,hostAlps);
 
-            if (ackedPacketSize > 0) {
-                if (auto hostAlps = DynamicCast<UbHostAlps>(m_congestionCtrl)) {
-                    hostAlps->AckBdpLikeInFlightBytes(ackedPacketSize);
-                }
-            }
+            // if (ackedPacketSize > 0) {
+            //     if (auto hostAlps = DynamicCast<UbHostAlps>(m_congestionCtrl)) {
+            //         hostAlps->AckBdpLikeInFlightBytes(ackedPacketSize);
+            //     }
+            // }
+            // else{
+            //     std::cout << "Warning: ackedPacketSize is zero" << std::endl;
+            // }
         }
 
     //=============================解析APLStag================================================
@@ -1584,12 +1588,15 @@ bool UbTransportChannel::IsLimited()
     //新增ALPS重传缓冲区是否有数据包判定,有就返回非空,因为重传包属于飞行中的包,所以窗口满了也可以触发重传
      auto routingProcess = NodeList::GetNode(m_nodeId)->GetObject<UbSwitch>()->GetRoutingProcess();
     if (routingProcess->GetRoutingAlgorithm() == UbRoutingProcess::UbRoutingAlgorithm::ALPS ){
-         if(routingProcess->HasAlpsRetransPacket(m_tpn)){
+        auto hostAlps = DynamicCast<UbHostAlps>(m_congestionCtrl);
+         if (hostAlps && hostAlps->IsBdpLikeFull(0)) {
+             return true;
+        }
+        
+        if(routingProcess->HasAlpsRetransPacket(m_tpn)){
         return false;
        }
-       if(m_nodeId == 0){
-        //std::cout<<"Node"<<m_nodeId<<" alps retrans buffer is empty"<<std::endl;
-       }
+
        
     }
 

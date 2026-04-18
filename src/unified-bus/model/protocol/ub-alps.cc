@@ -533,15 +533,33 @@ void UbHostAlps::InitRateControlState()
     m_consecutiveSpeedups = 0;
     m_bdpLimitEnabled = GetAlpsConfigBool("UB_ALPS_ENABLE_BDP_LIMIT", false);
     m_bdpLikeInFlightBits = 0;
-    if (m_bdpLimitEnabled && m_fixedPathLatencyForBdpNs > 0) {
-        const uint64_t initialRateBps = std::max<uint64_t>(1, m_currentRate.GetBitRate());
-        m_bdpLikeLimitBits = static_cast<uint64_t>(
-            8.0 * (static_cast<double>(initialRateBps) / 1e9) * static_cast<double>(m_fixedPathLatencyForBdpNs));
-    } else {
-        m_bdpLikeLimitBits = 0;
-    }
+    RefreshBdpLikeLimitAfterRateChange();
     // 与全局拥塞控制开关保持一致（UB_CC_ENABLED）
     m_rateLimitEnabled = m_congestionCtrlEnabled;
+}
+
+void UbHostAlps::RefreshBdpLikeLimitAfterRateChange()
+{
+    const bool wasFullBeforeLimitUpdate = IsBdpLikeFull(0);
+    const uint64_t oldLimitBits = m_bdpLikeLimitBits;
+
+    if (!m_bdpLimitEnabled || m_fixedPathLatencyForBdpNs == 0) {
+        m_bdpLikeLimitBits = 0;
+        return;
+    }
+
+    const uint64_t currentRateBps = std::max<uint64_t>(1, m_currentRate.GetBitRate());
+    uint64_t newLimitBits = static_cast<uint64_t>(
+        6.0 * (static_cast<double>(currentRateBps) / 1e9) * static_cast<double>(m_fixedPathLatencyForBdpNs));
+    newLimitBits = std::max<uint64_t>(1, newLimitBits);
+    m_bdpLikeLimitBits = newLimitBits;
+
+    if (m_bdpLikeLimitBits > oldLimitBits &&
+        wasFullBeforeLimitUpdate &&
+        !IsBdpLikeFull(0) &&
+        m_nextSendTime <= Simulator::Now()) {
+        UpdateNextSendTimeForRateAdjustment(0);
+    }
 }
 
 bool UbHostAlps::TrySpeedUpForALPS(Time maxBaseDelay)
@@ -581,6 +599,7 @@ bool UbHostAlps::TrySpeedUpForALPS(Time maxBaseDelay)
 
     newRateBps = std::min<uint64_t>(maxRateBps, std::max<uint64_t>(minRateBps, newRateBps));
     m_currentRate = DataRate(newRateBps);
+    //RefreshBdpLikeLimitAfterRateChange();
     // 根据新的发送速率和剩余窗口计算下次发送时间
     //std::cout<<"NODE："<<m_src<<" TrySpeedUp: "<<"current rate="<<currentBps/1000000000<<" Gbps, "<<"new rate="<<newRateBps/1000000000<<" Gbps, "<<"NanoSeconds(leftBits):"<<leftBits<<"ns"<<std::endl;
      uint32_t remainingTimeNs = leftBits * 1000000000 / newRateBps;
@@ -607,6 +626,7 @@ bool UbHostAlps::TrySlowDownForALPS(Time maxBaseDelay)
     const double slowdownFactor = GetAlpsConfigDouble("UB_ALPS_SLOWDOWN_RATE_DECAY_FACTOR", 0.65);
     const uint64_t newRateBps = std::max<uint64_t>(minRateBps, static_cast<uint64_t>(currentBps * slowdownFactor));
     m_currentRate = DataRate(newRateBps);
+    //RefreshBdpLikeLimitAfterRateChange();
     //计算当前数据包还有多少数据没发送
     uint64_t leftBits=(double)(currentBps)/1000000000*
     ((m_nextSendTime.GetNanoSeconds()-Simulator::Now().GetNanoSeconds())>=0

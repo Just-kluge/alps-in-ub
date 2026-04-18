@@ -11,6 +11,7 @@
 #include "ns3/ipv4-header.h"
 #include "ns3/simulator.h"
 #include "random_generator.h"
+#include "ns3/ub-alps.h"
 using namespace utils;
 
 #ifndef RTO_TIME
@@ -525,31 +526,14 @@ uint32_t UbRoutingProcess::GetPidOnHostForPacketSpraying( AlpsPstEntry* pstEntry
 
    }
 
-void UbRoutingProcess::RecordAlpsSentPacket(uint32_t pid, const PendingPkt& pkt)
+void UbRoutingProcess::RecordAlpsSentPacket(uint32_t pid, const PendingPkt& pkt,Ptr<UbHostAlps> alps)
 {
     m_pendingByPid[pid].push_back(pkt);
-    SetTimeoutForLapsbypid(pid, pkt.srcTpn);
+    SetTimeoutForLapsbypid(pid, pkt.srcTpn, alps);
 }
 
-uint32_t UbRoutingProcess::GetAlpsAckedPacketSizeByPsn(uint32_t pid,
-                                                       uint32_t srcTpn,
-                                                       uint32_t ackPsn) const
-{
-    auto it = m_pendingByPid.find(pid);
-    if (it == m_pendingByPid.end()) {
-        return 0;
-    }
 
-    const auto& pendingQ = it->second;
-    for (const auto& pkt : pendingQ) {
-        if (pkt.psn == ackPsn && pkt.srcTpn == srcTpn && pkt.pktCopy) {
-            return pkt.pktCopy->GetSize();
-        }
-    }
-    return 0;
-}
-
-void UbRoutingProcess::HandleAlpsAckByPsn(uint32_t pid, uint32_t srcTpn, uint32_t ackPsn,uint32_t m_sport)
+void UbRoutingProcess::HandleAlpsAckByPsn(uint32_t pid, uint32_t srcTpn, uint32_t ackPsn,uint32_t m_sport,Ptr<UbHostAlps> alps  )
 {
     auto it = m_pendingByPid.find(pid);
     if (it == m_pendingByPid.end()) {
@@ -564,11 +548,14 @@ void UbRoutingProcess::HandleAlpsAckByPsn(uint32_t pid, uint32_t srcTpn, uint32_
         pendingQ.pop_front();
         //匹配成功就离开
         if ( head.psn == ackPsn&& head.srcTpn == srcTpn) {
+            alps->AckBdpLikeInFlightBytes(head.pktCopy->GetSize());
             matched = true;
             break;  
         }
         m_retransBuffer[srcTpn].push_back(head);
-        //std::cout <<"Node"<<m_nodeId<< " 记录了丢失的数据包,"<<"当前缓存数据包个数:"<<m_retransBuffer[srcTpn].size() << std::endl;
+        //丢失包去除记录
+        alps->AckBdpLikeInFlightBytes(head.pktCopy->GetSize());
+        std::cout <<"Node"<<m_nodeId<< " 记录了丢失的数据包,"<<"当前缓存数据包个数:"<<m_retransBuffer[srcTpn].size() << std::endl;
 
          ++UbTransportChannel::s_totalActiveRetransSent;
         if((UbTransportChannel::s_totalActiveRetransSent+UbTransportChannel::s_totaltimeoutretrans)%5000==0){
@@ -585,7 +572,7 @@ void UbRoutingProcess::HandleAlpsAckByPsn(uint32_t pid, uint32_t srcTpn, uint32_
         m_pendingByPid.erase(it);
     }
 
-    SetTimeoutForLapsbypid(pid,srcTpn);
+    SetTimeoutForLapsbypid(pid,srcTpn,alps);
 
     // 关键修复
     if(!m_retransBuffer[srcTpn].empty()){
@@ -619,7 +606,7 @@ PendingPkt UbRoutingProcess::PopAlpsRetransPacket(uint32_t tpn)
     return pkt;
 }
 
-void UbRoutingProcess::SetTimeoutForLapsbypid(uint32_t pid, uint32_t srcTpn){
+void UbRoutingProcess::SetTimeoutForLapsbypid(uint32_t pid, uint32_t srcTpn,Ptr<UbHostAlps> alps  ){
 //在数据包发送以及ACK接收时触发
 Time timeInNs = NanoSeconds(1000000);
 auto it = m_rtoEventsPerPath.find(pid);
@@ -643,21 +630,21 @@ if (it->second.IsPending())
 	it->second.Cancel();
 }
 //队列非空，重设超时计时器
-EventId newEvent = Simulator::Schedule(timeInNs, &UbRoutingProcess::HandleTimeoutForLapsbypid, this, pid,srcTpn);
+EventId newEvent = Simulator::Schedule(timeInNs, &UbRoutingProcess::HandleTimeoutForLapsbypid, this, pid,srcTpn,alps);
 m_rtoEventsPerPath[pid] = newEvent;
 NS_LOG_INFO("Set a new timeout event for pid " << pid << " at " << Simulator::Now() + timeInNs);
         
 }else
 
     {
-	m_rtoEventsPerPath[pid] = Simulator::Schedule(timeInNs, &UbRoutingProcess::HandleTimeoutForLapsbypid, this, pid,srcTpn);
+	m_rtoEventsPerPath[pid] = Simulator::Schedule(timeInNs, &UbRoutingProcess::HandleTimeoutForLapsbypid, this, pid,srcTpn,alps);
 	NS_LOG_INFO("Initial a new timeout event that should be triggered at " <<m_rtoEventsPerPath[pid].GetTs());
 
 	}
 
 
 }
-void UbRoutingProcess::HandleTimeoutForLapsbypid(uint32_t pid, uint32_t srcTpn){
+void UbRoutingProcess::HandleTimeoutForLapsbypid(uint32_t pid, uint32_t srcTpn,Ptr<UbHostAlps> alps  ){
    std::cout<<"Node"<<m_nodeId<<" 超时事件触发"<<std::endl;
     auto it = m_pendingByPid.find(pid);
     if (it == m_pendingByPid.end()) {
@@ -673,7 +660,8 @@ void UbRoutingProcess::HandleTimeoutForLapsbypid(uint32_t pid, uint32_t srcTpn){
         PendingPkt head = pendingQ.front();
         pendingQ.pop_front();
         m_retransBuffer[srcTpn].push_back(head);
-        //std::cout <<"Node"<<m_nodeId<< " 记录了丢失的数据包,"<<"当前缓存数据包个数:"<<m_retransBuffer[srcTpn].size() << std::endl;
+        alps->AckBdpLikeInFlightBytes(head.pktCopy->GetSize());
+        std::cout <<"Node"<<m_nodeId<< " 记录了丢失的数据包,"<<"当前缓存数据包个数:"<<m_retransBuffer[srcTpn].size() << std::endl;
         UbTransportChannel::s_totaltimeoutretrans++;
     }
 

@@ -96,6 +96,7 @@ private:
     void StateReset();
     void InitRateControlState();
     void InitFixedPathLatencyForBdp();
+    void RefreshBdpLikeLimitAfterRateChange();
     bool TrySpeedUpForALPS(Time maxBaseDelay);
     bool TrySlowDownForALPS(Time maxBaseDelay);
 
