@@ -446,6 +446,9 @@ void UbTransportChannel::AddAplsTagForDatapacketOnHost(Ptr<Packet> p){
          return;
      }
          uint32_t path_id = rt->GetPidOnHostForPacketSpraying(pstEntry,p->GetSize());//
+            if (auto hostAlps = DynamicCast<UbHostAlps>(m_congestionCtrl)) {
+                hostAlps->AddBdpLikeInFlightBytes(p->GetSize());
+            }
          uint32_t path_length = 0;
          for (const auto* pitEntry : pstEntry->PitEntries) {
             if (pitEntry && pitEntry->GetPathId() == path_id) {
@@ -504,6 +507,9 @@ void UbTransportChannel::AddAplsTagForRetransPacketOnHost(Ptr<Packet> p ,uint32_
          return;
      }
          uint32_t path_id = rt->GetPidOnHostForPacketSpraying(pstEntry,p->GetSize());//
+            if (auto hostAlps = DynamicCast<UbHostAlps>(m_congestionCtrl)) {
+                hostAlps->AddBdpLikeInFlightBytes(p->GetSize());
+            }
          uint32_t path_length = 0;
          for (const auto* pitEntry : pstEntry->PitEntries) {
             if (pitEntry && pitEntry->GetPathId() == path_id) {
@@ -804,8 +810,17 @@ void UbTransportChannel::RecvTpAckForAlps(Ptr<Packet> p)
             }
             //std::cout<<"pitEntry->GetRealLatency():"<<pitEntry->GetRealLatency()<<std::endl;
          }
+            const uint32_t ackedPacketSize =
+                RoutingProcess->GetAlpsAckedPacketSizeByPsn(packet_pid, m_tpn, ackPsn);
+
             //都到这里来了似乎不用校验tpn了
             RoutingProcess->HandleAlpsAckByPsn(packet_pid, m_tpn, ackPsn,m_sport);
+
+            if (ackedPacketSize > 0) {
+                if (auto hostAlps = DynamicCast<UbHostAlps>(m_congestionCtrl)) {
+                    hostAlps->AckBdpLikeInFlightBytes(ackedPacketSize);
+                }
+            }
         }
 
     //=============================解析APLStag================================================

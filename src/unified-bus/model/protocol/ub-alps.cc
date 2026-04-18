@@ -41,6 +41,16 @@ GetAlpsConfigDouble(const char* name, double defaultValue)
     return defaultValue;
 }
 
+static bool
+GetAlpsConfigBool(const char* name, bool defaultValue)
+{
+    BooleanValue value(defaultValue);
+    if (GlobalValue::GetValueByNameFailSafe(name, value)) {
+        return value.Get();
+    }
+    return defaultValue;
+}
+
 GlobalValue g_alpsSpeedupCooldownDivisor(
     "UB_ALPS_SPEEDUP_COOLDOWN_DIVISOR",
     "ALPS speedup cooldown divisor used by UbHostAlps::TrySpeedUpForALPS.",
@@ -70,6 +80,12 @@ GlobalValue g_alpsInitialRateOtherFactor(
     "ALPS initial rate multiplier for non-same-col flows.",
     DoubleValue(0.55),
     MakeDoubleChecker<double>(0.0, 1.0));
+
+GlobalValue g_alpsEnableBdpLimit(
+    "UB_ALPS_ENABLE_BDP_LIMIT",
+    "Enable BDP-like in-flight limit for UbHostAlps.",
+    BooleanValue(false),
+    MakeBooleanChecker());
 
 NS_LOG_COMPONENT_DEFINE("UbAlps");
 NS_OBJECT_ENSURE_REGISTERED(UbAlps);
@@ -156,6 +172,7 @@ TypeId UbHostAlps::GetTypeId(void)
 UbHostAlps::UbHostAlps()
 {
     m_nodeType = UB_DEVICE;
+    m_rateLimitEnabled = m_congestionCtrlEnabled;
 }
 
 UbHostAlps::~UbHostAlps()
@@ -176,6 +193,7 @@ void UbHostAlps::TpInit(Ptr<UbTransportChannel> tp)
             m_maxRate = hostPort->GetDataRate();
         }
     }
+    InitFixedPathLatencyForBdp();
     InitRateControlState();
 }
 
@@ -378,6 +396,109 @@ void UbHostAlps::UpdateNextSendTimeForRateAdjustment(uint32_t Remaintransmission
 Time UbHostAlps::GetNextSendTime(){
   return m_nextSendTime;
 }
+
+bool UbHostAlps::IsBdpLikeFull(uint32_t nextPacketBytes) const
+{
+    if (!m_bdpLimitEnabled || m_bdpLikeLimitBits == 0) {
+        return false;
+    }
+    const uint64_t extraBits = static_cast<uint64_t>(nextPacketBytes) * 8ULL;
+    return (m_bdpLikeInFlightBits + extraBits) > m_bdpLikeLimitBits;
+}
+
+void UbHostAlps::AddBdpLikeInFlightBytes(uint32_t packetBytes)
+{
+    if (!m_bdpLimitEnabled || m_bdpLikeLimitBits == 0) {
+        return;
+    }
+    m_bdpLikeInFlightBits += static_cast<uint64_t>(packetBytes) * 8ULL;
+    // std::cout << "[" << GetTypeId().GetName() << "]"
+    //           << "[Debug]"
+    //           << "[" << __FUNCTION__ << "]"
+    //           << " Local:" << m_src
+    //           << " Recv from:" << m_dst
+    //           << " Tpn:" << m_tpn
+    //           << " Pkt size:" << packetBytes
+    //           << " Bits:" << static_cast<uint64_t>(packetBytes) * 8ULL
+    //           << " InFlightBits:" << m_bdpLikeInFlightBits
+    //           << " BdpLikeLimitBits:" << m_bdpLikeLimitBits
+    //           <<" m_fixedPathLatencyForBdpNs "<<m_fixedPathLatencyForBdpNs
+    //           <<"currentRte "<<m_currentRate.GetBitRate()/1000000000<<" Gbps"  
+    //           << std::endl;
+}
+
+void UbHostAlps::AckBdpLikeInFlightBytes(uint32_t packetBytes)
+{
+    if (!m_bdpLimitEnabled || m_bdpLikeLimitBits == 0) {
+        return;
+    }
+
+    const bool wasFull = IsBdpLikeFull(0);
+    const uint64_t releasedBits = static_cast<uint64_t>(packetBytes) * 8ULL;
+    if (releasedBits >= m_bdpLikeInFlightBits) {
+        m_bdpLikeInFlightBits = 0;
+    } else {
+        m_bdpLikeInFlightBits -= releasedBits;
+    }
+
+    if (wasFull && !IsBdpLikeFull(0) && m_nextSendTime <= Simulator::Now()) {
+        UpdateNextSendTimeForRateAdjustment(0);
+    }
+    // std::cout << "[" << GetTypeId().GetName() << "]"
+    //           << "[Debug]"
+    //           << "[" << __FUNCTION__ << "]"
+    //           << " Local:" << m_src
+    //           << " Recv from:" << m_dst
+    //           << " Tpn:" << m_tpn
+    //           << " Pkt size:" << packetBytes
+    //           << " Bits:" << static_cast<uint64_t>(packetBytes) * 8ULL
+    //           << " InFlightBits:" << m_bdpLikeInFlightBits
+    //           << " BdpLikeLimitBits:" << m_bdpLikeLimitBits
+    //           <<" m_fixedPathLatencyForBdpNs "<<m_fixedPathLatencyForBdpNs
+    //           <<"currentRte "<<m_currentRate.GetBitRate()/1000000000<<" Gbps"    
+    //           << std::endl;
+}
+
+void UbHostAlps::InitFixedPathLatencyForBdp()
+{
+    m_fixedPathLatencyForBdpNs = 0;
+
+    Ptr<Node> senderNode = nullptr;
+    if (m_src < NodeList::GetNNodes()) {
+        senderNode = NodeList::GetNode(m_src);
+    }
+    if (!senderNode) {
+        return;
+    }
+
+    Ptr<UbSwitch> senderSwitch = senderNode->GetObject<UbSwitch>();
+    if (!senderSwitch) {
+        return;
+    }
+    Ptr<UbRoutingProcess> routingProcess = senderSwitch->GetRoutingProcess();
+    if (!routingProcess) {
+        return;
+    }
+
+    const uint64_t pstKey = UbRoutingProcess::HashPstKey(m_src, m_dst);
+    AlpsPstEntry* pstEntry = routingProcess->GetPstEntry(pstKey);
+    if (!pstEntry || pstEntry->PitEntries.empty()) {
+        return;
+    }
+
+    uint64_t maxBaseLatencyNs = 0;
+    uint64_t maxNoQueueLatencyNs = 0;
+    for (const auto* pit : pstEntry->PitEntries) {
+        if (!pit) {
+            continue;
+        }
+        maxBaseLatencyNs = std::max(maxBaseLatencyNs, static_cast<uint64_t>(pit->GetBaseLatency()));
+        maxNoQueueLatencyNs = std::max(maxNoQueueLatencyNs, static_cast<uint64_t>(pit->GetNoQueueLatency()));
+    }
+
+    m_fixedPathLatencyForBdpNs = maxBaseLatencyNs + maxNoQueueLatencyNs;
+}
+
 void UbHostAlps::InitRateControlState()
 {
     Ptr<Node> senderNode = nullptr;
@@ -410,8 +531,17 @@ void UbHostAlps::InitRateControlState()
     m_nextSpeedupTime = Seconds(0);
     m_nextSendTime = Seconds(0);
     m_consecutiveSpeedups = 0;
-    // = true为允许动态调整发送速率
-    m_rateLimitEnabled = true;
+    m_bdpLimitEnabled = GetAlpsConfigBool("UB_ALPS_ENABLE_BDP_LIMIT", false);
+    m_bdpLikeInFlightBits = 0;
+    if (m_bdpLimitEnabled && m_fixedPathLatencyForBdpNs > 0) {
+        const uint64_t initialRateBps = std::max<uint64_t>(1, m_currentRate.GetBitRate());
+        m_bdpLikeLimitBits = static_cast<uint64_t>(
+            8.0 * (static_cast<double>(initialRateBps) / 1e9) * static_cast<double>(m_fixedPathLatencyForBdpNs));
+    } else {
+        m_bdpLikeLimitBits = 0;
+    }
+    // 与全局拥塞控制开关保持一致（UB_CC_ENABLED）
+    m_rateLimitEnabled = m_congestionCtrlEnabled;
 }
 
 bool UbHostAlps::TrySpeedUpForALPS(Time maxBaseDelay)
@@ -421,7 +551,7 @@ bool UbHostAlps::TrySpeedUpForALPS(Time maxBaseDelay)
     if (!m_rateLimitEnabled || Simulator::Now() < m_nextSpeedupTime) {
         return false;
     }
-    
+     
 
     const uint64_t maxRateBps = std::max<uint64_t>(1, m_maxRate.GetBitRate());
     const uint64_t minRateBps = std::min<uint64_t>(m_minRate.GetBitRate(), maxRateBps);

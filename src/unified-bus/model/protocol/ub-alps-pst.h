@@ -146,6 +146,7 @@ class AlpsPitEntry
         virtualLatencyNs = 0.0;
         //调整maxBaseDelay的时候m_nextSlowdownTime也会进行变动，所以需要再次对调速间隔进行评估
         noQueueLatencyNs = m_baseLatency+(length-2)*(PACKET_SIZE*8)/(PORT_RATE)+2*(PACKET_SIZE*8)/(HOST_PORT_RATE);
+      
          //基准时延，超过这个 路径就可以被认为拥塞了------此处还附加了权重的影响
         baseLatency = noQueueLatencyNs+GetTolerantlantency(length)*sqrt(weight); // 
         //std::cout << "PathID: " << pathId << ", noQueueLatencyNs: " << noQueueLatencyNs << ", baseLatency: " << baseLatency<<"GetMaxTolerableLatency:"<<GetMaxTolerableLatency() <<"weight:"<< weight << std::endl;

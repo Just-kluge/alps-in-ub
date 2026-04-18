@@ -89,9 +89,13 @@ public:
     void UpdateNextSendTimeForRateAdjustment(uint32_t RemaintransmissionDelayinNs);
     Time GetLastVisitTime() { return m_LastVisitTime; }
     string GetLastVisitReason() { return m_lastVisitReason; }
+    bool IsBdpLikeFull(uint32_t nextPacketBytes = 0) const;
+    void AddBdpLikeInFlightBytes(uint32_t packetBytes);
+    void AckBdpLikeInFlightBytes(uint32_t packetBytes);
 private:
     void StateReset();
     void InitRateControlState();
+    void InitFixedPathLatencyForBdp();
     bool TrySpeedUpForALPS(Time maxBaseDelay);
     bool TrySlowDownForALPS(Time maxBaseDelay);
 
@@ -128,6 +132,11 @@ private:
     Time m_nextSendTime = Seconds(0);   // 下次允许发送时间
     Time m_LastVisitTime = Seconds(0);   //最后一次访问时间
     string m_lastVisitReason = "";
+
+    bool m_bdpLimitEnabled = false;
+    uint64_t m_fixedPathLatencyForBdpNs = 0;
+    uint64_t m_bdpLikeLimitBits = 0;
+    uint64_t m_bdpLikeInFlightBits = 0;
 
     EventId m_nextSendTimerEvent{};     // 下次发送定时器事件 ID
 };

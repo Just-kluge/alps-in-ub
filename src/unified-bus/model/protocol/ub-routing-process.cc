@@ -531,6 +531,24 @@ void UbRoutingProcess::RecordAlpsSentPacket(uint32_t pid, const PendingPkt& pkt)
     SetTimeoutForLapsbypid(pid, pkt.srcTpn);
 }
 
+uint32_t UbRoutingProcess::GetAlpsAckedPacketSizeByPsn(uint32_t pid,
+                                                       uint32_t srcTpn,
+                                                       uint32_t ackPsn) const
+{
+    auto it = m_pendingByPid.find(pid);
+    if (it == m_pendingByPid.end()) {
+        return 0;
+    }
+
+    const auto& pendingQ = it->second;
+    for (const auto& pkt : pendingQ) {
+        if (pkt.psn == ackPsn && pkt.srcTpn == srcTpn && pkt.pktCopy) {
+            return pkt.pktCopy->GetSize();
+        }
+    }
+    return 0;
+}
+
 void UbRoutingProcess::HandleAlpsAckByPsn(uint32_t pid, uint32_t srcTpn, uint32_t ackPsn,uint32_t m_sport)
 {
     auto it = m_pendingByPid.find(pid);

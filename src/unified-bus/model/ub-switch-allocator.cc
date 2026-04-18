@@ -301,10 +301,12 @@ Ptr<UbIngressQueue> UbRoundRobinAllocator::SelectNextIngressQueueForALPS(Ptr<UbP
                 
             }
             bool rateReady = true;
+            bool bdpReady = true;
             auto congestionCtrl = DynamicCast<UbHostAlps>(ingressQueue->GetCongestcontrol());
             if (congestionCtrl)
             {
                 rateReady = congestionCtrl->GetNextSendTime() <= Simulator::Now();
+                bdpReady = !congestionCtrl->IsBdpLikeFull(0);
             }
 
             if (ingressQueue->IsEmpty())
@@ -318,7 +320,7 @@ Ptr<UbIngressQueue> UbRoundRobinAllocator::SelectNextIngressQueueForALPS(Ptr<UbP
        
             const bool isLimited = ingressQueue->IsLimited();
             const bool isFcLimited = outPort->GetFlowControl()->IsFcLimited(ingressQueue);
-            const bool selected = !isLimited && !isFcLimited && rateReady;
+            const bool selected = !isLimited && !isFcLimited && rateReady && bdpReady;
 
 
             if (selected)
@@ -344,6 +346,10 @@ Ptr<UbIngressQueue> UbRoundRobinAllocator::SelectNextIngressQueueForALPS(Ptr<UbP
             else if (!rateReady)
             {
                 reason = "skip_rate_not_ready";
+            }
+            else if (!bdpReady)
+            {
+                reason = "skip_bdp_full";
             }
             else
             {
