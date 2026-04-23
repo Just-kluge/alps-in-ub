@@ -193,7 +193,6 @@ void UbHostAlps::TpInit(Ptr<UbTransportChannel> tp)
             m_maxRate = hostPort->GetDataRate();
         }
     }
-    InitFixedPathLatencyForBdp();
     InitRateControlState();
 }
 
@@ -459,7 +458,7 @@ void UbHostAlps::AckBdpLikeInFlightBytes(uint32_t packetBytes)
     //           << std::endl;
 }
 
-void UbHostAlps::InitFixedPathLatencyForBdp()
+void UbHostAlps::InitFixedPathLatencyForBdp(uint32_t RateinBps)
 {
     m_fixedPathLatencyForBdpNs = 0;
 
@@ -488,10 +487,11 @@ void UbHostAlps::InitFixedPathLatencyForBdp()
 
     uint64_t maxBaseLatencyNs = 0;
     uint64_t maxNoQueueLatencyNs = 0;
-    for (const auto* pit : pstEntry->PitEntries) {
+    for ( auto* pit : pstEntry->PitEntries) {
         if (!pit) {
             continue;
         }
+        pit->InitPerPathBdpLimit(RateinBps);
         maxBaseLatencyNs = std::max(maxBaseLatencyNs, static_cast<uint64_t>(pit->GetBaseLatency()));
         maxNoQueueLatencyNs = std::max(maxNoQueueLatencyNs, static_cast<uint64_t>(pit->GetNoQueueLatency()));
     }
@@ -533,7 +533,9 @@ void UbHostAlps::InitRateControlState()
     m_consecutiveSpeedups = 0;
     m_bdpLimitEnabled = GetAlpsConfigBool("UB_ALPS_ENABLE_BDP_LIMIT", false);
     m_bdpLikeInFlightBits = 0;
+    InitFixedPathLatencyForBdp(m_currentRate.GetBitRate());
     RefreshBdpLikeLimitAfterRateChange();
+    UbRoutingProcess::RegisterPstInitialRateIfAbsent(m_src, m_dst, m_currentRate.GetBitRate());
     // 与全局拥塞控制开关保持一致（UB_CC_ENABLED）
     m_rateLimitEnabled = m_congestionCtrlEnabled;
 }
@@ -550,7 +552,7 @@ void UbHostAlps::RefreshBdpLikeLimitAfterRateChange()
 
     const uint64_t currentRateBps = std::max<uint64_t>(1, m_currentRate.GetBitRate());
     uint64_t newLimitBits = static_cast<uint64_t>(
-        6.0 * (static_cast<double>(currentRateBps) / 1e9) * static_cast<double>(m_fixedPathLatencyForBdpNs));
+        2.0 * (static_cast<double>(currentRateBps) / 1e9) * static_cast<double>(m_fixedPathLatencyForBdpNs));
     newLimitBits = std::max<uint64_t>(1, newLimitBits);
     m_bdpLikeLimitBits = newLimitBits;
 
@@ -740,5 +742,30 @@ void UbSwitchAlps::DoDispose()
     m_random = nullptr;
     Object::DoDispose();
 }
+ void  UbHostAlps::AckPerPathBdpInFlightBytes(uint32_t pid, uint32_t packetSize){
+    Ptr<Node> senderNode = NodeList::GetNode(m_src);
+    if (!senderNode) {
+        std::cout << "Sender node is null" << std::endl;
+        return;
+    }
+    Ptr<UbSwitch> senderSwitch = senderNode->GetObject<UbSwitch>();
+    if (!senderSwitch) {
+        std::cout << "Sender node has no switch" << std::endl;
+        return;
+    }
+
+    Ptr<UbRoutingProcess> routingProcess = senderSwitch->GetRoutingProcess();
+    if (!routingProcess) {
+        std::cout << "Sender node has no routing process" << std::endl;
+        return;
+    }
+      auto pstKey = UbRoutingProcess::HashPstKey(m_src,m_dst);
+        AlpsPstEntry* pstEntry =routingProcess->GetPstEntry( pstKey);
+        for (const auto& entry : pstEntry->PitEntries) {
+            if (entry->GetPathId() == pid) {
+               entry->AckPerPathBdpInFlightBytes(packetSize);
+            }
+        }
+ }
 
 }

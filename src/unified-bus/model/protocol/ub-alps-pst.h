@@ -8,6 +8,7 @@
 #include <iomanip>
 #include <string>
 #include <ostream>
+#include <algorithm>
 #include "ns3/ptr.h"
 #include <ns3/nstime.h>
 #ifndef DEFAULT_PRECISION_FOR_FLOAT_TO_STRING
@@ -69,6 +70,11 @@ class AlpsPitEntry
     double weight;
     static bool s_enableVirtualLatency;
     static bool s_enablePathWeight;
+    static bool s_enablePerPathBdpLimit;
+
+    bool m_perPathBdpInitialized;
+    uint64_t m_perPathBdpLimitBits;
+    uint64_t m_perPathBdpInFlightBits;
     public:
     void SetPathId(uint32_t pathId) { this->pathId = pathId; }
     uint32_t GetPathId() const { return pathId; }
@@ -114,6 +120,8 @@ class AlpsPitEntry
     static bool IsVirtualLatencyEnabled() { return s_enableVirtualLatency; }
     static void SetEnablePathWeight(bool enable) { s_enablePathWeight = enable; }
     static bool IsPathWeightEnabled() { return s_enablePathWeight; }
+    static void SetEnablePerPathBdpLimit(bool enable) { s_enablePerPathBdpLimit = enable; }
+    static bool IsPerPathBdpLimitEnabled() { return s_enablePerPathBdpLimit; }
     static void InitializeFeatureSwitchesFromConfig();
     double GetVirtualLatencyNs() const { return virtualLatencyNs; }
     void ResetVirtualLatency() { virtualLatencyNs = 0.0; }
@@ -130,6 +138,69 @@ class AlpsPitEntry
       }
       return weight; 
     }
+
+    void InitPerPathBdpLimit(uint64_t initRateBps)
+    {
+      if (m_perPathBdpInitialized) {
+        return;
+      }
+      if (!s_enablePerPathBdpLimit || initRateBps == 0) {
+        return;
+      }
+
+      const uint64_t pathLatencyNs = static_cast<uint64_t>(GetBaseLatency()) +
+                                     static_cast<uint64_t>(GetNoQueueLatency());
+      if (pathLatencyNs == 0) {
+        return;
+      }
+
+      const double weightedBits =
+          0.5 * (static_cast<double>(initRateBps) / 1e9) *
+          static_cast<double>(pathLatencyNs) * std::max(0.0, GetWeight());
+      m_perPathBdpLimitBits = std::max<uint64_t>(1ULL, static_cast<uint64_t>(weightedBits));
+      m_perPathBdpInitialized = true;
+    }
+
+    bool IsPerPathBdpFull(uint32_t nextPacketBytes = 0)
+    {
+      if (!s_enablePerPathBdpLimit) {
+        return false;
+      }
+      if (m_perPathBdpLimitBits == 0) {
+        return false;
+      }
+
+      const uint64_t extraBits = static_cast<uint64_t>(nextPacketBytes) * 8ULL;
+      return (m_perPathBdpInFlightBits + extraBits) > m_perPathBdpLimitBits;
+    }
+
+    void AddPerPathBdpInFlightBytes(uint32_t packetBytes)
+    {
+      if (!s_enablePerPathBdpLimit) {
+        return;
+      }
+      if (m_perPathBdpLimitBits == 0) {
+        return;
+      }
+
+      m_perPathBdpInFlightBits += static_cast<uint64_t>(packetBytes) * 8ULL;
+    }
+
+    void AckPerPathBdpInFlightBytes(uint32_t packetBytes)
+    {
+      if (!s_enablePerPathBdpLimit) {
+        return;
+      }
+
+      const uint64_t releasedBits = static_cast<uint64_t>(packetBytes) * 8ULL;
+      if (releasedBits > m_perPathBdpInFlightBits) {
+        std::cout<<"PathID: " << pathId << ", m_perPathBdpInFlightBits: " << m_perPathBdpInFlightBits << std::endl;
+        m_perPathBdpInFlightBits = 0;
+      } else {
+        m_perPathBdpInFlightBits -= releasedBits;
+      }
+    }
+
     AlpsPitEntry() : pathId(0), length(0), reversePathId(0), baseLatency(0), noQueueLatencyNs(0)
     {
         nodes.clear();
@@ -138,6 +209,9 @@ class AlpsPitEntry
         lastProbeTime = Seconds(0);
         virtualLatencyNs = 0.0;
         InflightPacketNumbers = 0;
+        m_perPathBdpInitialized = false;
+        m_perPathBdpLimitBits = 0;
+        m_perPathBdpInFlightBits = 0;
     }
     AlpsPitEntry(uint32_t pathId, uint32_t length, std::vector<uint32_t> nodes, std::vector<uint32_t> ports, uint32_t reversePathId, uint32_t m_baseLatency, double weight) : pathId(pathId), length(length), reversePathId(reversePathId), nodes(nodes), ports(ports), weight(weight)
     {
@@ -151,6 +225,9 @@ class AlpsPitEntry
         baseLatency = noQueueLatencyNs+GetTolerantlantency(length)*sqrt(weight); // 
         //std::cout << "PathID: " << pathId << ", noQueueLatencyNs: " << noQueueLatencyNs << ", baseLatency: " << baseLatency<<"GetMaxTolerableLatency:"<<GetMaxTolerableLatency() <<"weight:"<< weight << std::endl;
         InflightPacketNumbers = 0;
+        m_perPathBdpInitialized = false;
+        m_perPathBdpLimitBits = 0;
+        m_perPathBdpInFlightBits = 0;
     }
      
     //计算当前每个交换机出端口容忍K个数据包排队的总排队时延

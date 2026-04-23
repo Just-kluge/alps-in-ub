@@ -125,7 +125,11 @@ public:
        * @param pstEntry 
        * @return uint32_t 
        */
-    uint32_t GetPidOnHostForPacketSpraying( AlpsPstEntry* pstEntry,uint32_t packet_size);
+    uint32_t GetPidOnHostForPacketSpraying(AlpsPstEntry* pstEntry, uint32_t packet_size);
+
+    bool IsAllPerPathBdpFull(uint32_t src, uint32_t dst, uint32_t packetSize);
+
+    static void RegisterPstInitialRateIfAbsent(uint32_t src, uint32_t dst, uint64_t initRateBps);
     /**
      * @brief 在收到ACK时获取路径此时的瞬时时延，然后与ACK测量的结果进行比较（输出到控制台或者进行误差统计）
      * 输入：路径ID，源节点id，目的节点id
@@ -149,6 +153,7 @@ public:
      * @brief 构建路径id与反向路径id映射,根据某一路径pid查找反向路径pid，ACK用反向路径pid在交换机上可以快速找到其数据包的出端口。
      */
     static std::unordered_map<uint32_t, uint32_t> m_Pid2ReservePid; // 
+    static std::unordered_map<uint64_t, uint64_t> m_pstInitRateBps; // PST(src-dst) -> initial rate(bps)
     // key=(nodeId<<32)|outPort，value=该端口最近一次观测到的数据包排队时延(ns)
      std::unordered_map<uint64_t, uint32_t> m_NodePortQueueDelayNs;
 
@@ -194,6 +199,8 @@ private:
     //tpn->deque<PendingPkt>
     std::unordered_map<uint32_t, std::deque<PendingPkt>> m_retransBuffer;
     std::unordered_map<uint32_t, EventId> m_rtoEventsPerPath;
+
+    AlpsPitEntry* FindPitEntryByPathId(uint32_t pathId);
     
     // 辅助函数：标准化端口集合（排序去重）
     std::vector<uint16_t> normalizePorts(const std::vector<uint16_t>& ports)

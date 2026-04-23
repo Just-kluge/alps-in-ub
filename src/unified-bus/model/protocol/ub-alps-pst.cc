@@ -19,8 +19,15 @@ GlobalValue g_alpsEnablePathWeight(
     BooleanValue(false),
     MakeBooleanChecker());
 
+GlobalValue g_alpsEnablePerPathBdpLimit(
+    "UB_ALPS_ENABLE_PER_PATH_BDP_LIMIT",
+    "Enable per-path BDP-like in-flight limit in AlpsPitEntry.",
+    BooleanValue(false),
+    MakeBooleanChecker());
+
 bool AlpsPitEntry::s_enableVirtualLatency = false;// 默认不启用虚时延
 bool AlpsPitEntry::s_enablePathWeight= false; // 默认不启用路径权重
+bool AlpsPitEntry::s_enablePerPathBdpLimit = false; // 默认不启用Per Path BDP
 
 void AlpsPitEntry::InitializeFeatureSwitchesFromConfig()
 {
@@ -34,10 +41,17 @@ void AlpsPitEntry::InitializeFeatureSwitchesFromConfig()
         s_enablePathWeight = pathWeightValue.Get();
     }
 
+    BooleanValue perPathBdpValue(false);
+    if (GlobalValue::GetValueByNameFailSafe("UB_ALPS_ENABLE_PER_PATH_BDP_LIMIT", perPathBdpValue)) {
+        s_enablePerPathBdpLimit = perPathBdpValue.Get();
+    }
+
     NS_LOG_UNCOND("[ALPS_FEATURE_SWITCH] s_enableVirtualLatency="
                   << (s_enableVirtualLatency ? "true" : "false")
                   << ", s_enablePathWeight="
-                  << (s_enablePathWeight ? "true" : "false"));
+                  << (s_enablePathWeight ? "true" : "false")
+                  << ", s_enablePerPathBdpLimit="
+                  << (s_enablePerPathBdpLimit ? "true" : "false"));
 }
 uint32_t AlpsPitEntry::GetRealTimeLatency( Ptr<UbRoutingProcess>  ubRoutingProcess)const 
 {

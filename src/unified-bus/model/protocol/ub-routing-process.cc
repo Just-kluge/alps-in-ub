@@ -22,6 +22,7 @@ namespace ns3 {
 NS_OBJECT_ENSURE_REGISTERED(UbRoutingProcess);
 NS_LOG_COMPONENT_DEFINE("UbRoutingProcess");
 std::unordered_map<uint32_t, uint32_t> UbRoutingProcess::m_Pid2ReservePid;
+std::unordered_map<uint64_t, uint64_t> UbRoutingProcess::m_pstInitRateBps;
 /*-----------------------------------------UbRoutingProcess----------------------------------------------*/
 TypeId UbRoutingProcess::GetTypeId(void)
 {
@@ -399,7 +400,36 @@ void UbRoutingProcess::PrintAlpsRoute() const
         std::cout << "Path ID: " << pathId << " -> Out Port: " << static_cast<uint16_t>(outPort) << std::endl;
     }
 }
-uint32_t UbRoutingProcess::GetPidOnHostForPacketSpraying( AlpsPstEntry* pstEntry,uint32_t packet_size){
+
+
+void UbRoutingProcess::RegisterPstInitialRateIfAbsent(uint32_t src, uint32_t dst, uint64_t initRateBps)
+{
+    if (initRateBps == 0) {
+        return;
+    }
+    const uint64_t key = HashPstKey(src, dst);
+    m_pstInitRateBps.emplace(key, initRateBps);
+}
+
+
+bool UbRoutingProcess::IsAllPerPathBdpFull(uint32_t src, uint32_t dst, uint32_t packetSize){
+          auto pstKey = HashPstKey(src,dst);
+        AlpsPstEntry* pstEntry = GetPstEntry( pstKey);
+        for (const auto& entry : pstEntry->PitEntries) {
+           if(!entry->IsPerPathBdpFull(packetSize))
+           {
+               return false;
+           }
+        }
+        return true;
+}
+
+
+
+
+
+
+uint32_t UbRoutingProcess::GetPidOnHostForPacketSpraying(AlpsPstEntry* pstEntry, uint32_t packet_size){
     //std::cout<<"负载均衡"<<std::endl;
     uint32_t pitsize=pstEntry->PitEntries.size();     
     std::vector<double> weights;
@@ -416,6 +446,7 @@ uint32_t UbRoutingProcess::GetPidOnHostForPacketSpraying( AlpsPstEntry* pstEntry
     uint32_t i=0; 
     //std::cout<<"maxBaselatency:"<<maxBaselatency<<std::endl;
     //计算权重
+
     for (auto pitEntry : pstEntry->PitEntries)
      {
         // ALPS路径实时延迟按“无排队时延 + 端口映射里的最新排队时延”现算。
@@ -424,13 +455,23 @@ uint32_t UbRoutingProcess::GetPidOnHostForPacketSpraying( AlpsPstEntry* pstEntry
         const double lbLatency = realtimeLatency + virtualLatency;
         double ratio = -1.0 * lbLatency / maxBaselatency;
         // 这里乘以初始权重=========4月11日修改-jyxiao
+        if (pitEntry->IsPerPathBdpFull(0)) {
+            weights[i] = 0.0;
+            i++;
+            continue;
+        }
         weights[i] = std::exp(ratio)*pitEntry->GetWeight(); 
         sum_weights += weights[i]; 
         //std::cout<<"weights["<<i<<"]:"<<weights[i]<<std::endl;
         i++;
      }
      if (sum_weights == 0.0)
-    {  std::cout<<"sum_weights is zero"<<std::endl;
+    {
+       // 所有路径都被置零（例如 Per Path BDP 都满）时，发送侧 IsLimited 会阻止发包；这里保底返回首路径。
+       if (!pstEntry->PitEntries.empty() && pstEntry->PitEntries.front() != nullptr) {
+           return pstEntry->PitEntries.front()->GetPathId();
+       }
+       std::cout<<"sum_weights is zero"<<std::endl;
        exit(1);
     }
     //std::cout<<"数据包喷洒权重：:"<<sum_weights<<std::endl;
@@ -461,12 +502,14 @@ uint32_t UbRoutingProcess::GetPidOnHostForPacketSpraying( AlpsPstEntry* pstEntry
             pstEntry->PitEntries[k]->AddVirtualLatencyByPacketSize(packet_size);
             pstEntry->PitEntries[k]->UpdateLastUsedTime(Simulator::Now());
             pstEntry->PitEntries[k]->RecordSendPacket();
+            pstEntry->PitEntries[k]->AddPerPathBdpInFlightBytes(packet_size);   
             return pstEntry->PitEntries[k]->GetPathId();
         }
     }
      pstEntry->PitEntries[weights.size()-1]->AddVirtualLatencyByPacketSize(packet_size);
      pstEntry->PitEntries[weights.size()-1]->UpdateLastUsedTime(Simulator::Now());
      pstEntry->PitEntries[weights.size()-1]->RecordSendPacket();
+     pstEntry->PitEntries[weights.size()-1]->AddPerPathBdpInFlightBytes(packet_size); 
      return pstEntry->PitEntries[weights.size()-1]->GetPathId();         
 }
 
@@ -549,12 +592,14 @@ void UbRoutingProcess::HandleAlpsAckByPsn(uint32_t pid, uint32_t srcTpn, uint32_
         //匹配成功就离开
         if ( head.psn == ackPsn&& head.srcTpn == srcTpn) {
             alps->AckBdpLikeInFlightBytes(head.pktCopy->GetSize());
+            alps->AckPerPathBdpInFlightBytes(pid, head.pktCopy->GetSize());
             matched = true;
             break;  
         }
         m_retransBuffer[srcTpn].push_back(head);
         //丢失包去除记录
         alps->AckBdpLikeInFlightBytes(head.pktCopy->GetSize());
+        alps->AckPerPathBdpInFlightBytes(pid, head.pktCopy->GetSize());
         std::cout <<"Node"<<m_nodeId<< " 记录了丢失的数据包,"<<"当前缓存数据包个数:"<<m_retransBuffer[srcTpn].size() << std::endl;
 
          ++UbTransportChannel::s_totalActiveRetransSent;
@@ -661,6 +706,7 @@ void UbRoutingProcess::HandleTimeoutForLapsbypid(uint32_t pid, uint32_t srcTpn,P
         pendingQ.pop_front();
         m_retransBuffer[srcTpn].push_back(head);
         alps->AckBdpLikeInFlightBytes(head.pktCopy->GetSize());
+        alps->AckPerPathBdpInFlightBytes(pid, head.pktCopy->GetSize());
         std::cout <<"Node"<<m_nodeId<< " 记录了丢失的数据包,"<<"当前缓存数据包个数:"<<m_retransBuffer[srcTpn].size() << std::endl;
         UbTransportChannel::s_totaltimeoutretrans++;
     }

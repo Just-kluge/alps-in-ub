@@ -74,7 +74,6 @@ public:
 
     // 接收端生成拥塞控制算法需要的ack header
     UbCongestionExtTph RecverGenAckCeTphHeader(uint32_t psnStart, uint32_t psnEnd) override;
-
     // 发送端收到ack，调整窗口、速率等数据
     void SenderRecvAck(uint32_t psn, UbCongestionExtTph header) override;
    
@@ -92,10 +91,11 @@ public:
     bool IsBdpLikeFull(uint32_t nextPacketBytes = 0) const;
     void AddBdpLikeInFlightBytes(uint32_t packetBytes);
     void AckBdpLikeInFlightBytes(uint32_t packetBytes);
+    void  AckPerPathBdpInFlightBytes(uint32_t pid, uint32_t packetSize);
 private:
     void StateReset();
     void InitRateControlState();
-    void InitFixedPathLatencyForBdp();
+    void InitFixedPathLatencyForBdp(uint32_t RateinBps);
     void RefreshBdpLikeLimitAfterRateChange();
     bool TrySpeedUpForALPS(Time maxBaseDelay);
     bool TrySlowDownForALPS(Time maxBaseDelay);

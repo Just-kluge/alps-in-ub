@@ -959,7 +959,7 @@ vector<TrafficRecord> UbUtils::ReadTrafficCSV(const string &filename)
                     }
                 }
             }
-            UbAlpsPacketTracker::PrintNodeAllTPRates(nodeId, maxRate);
+            //UbAlpsPacketTracker::PrintNodeAllTPRates(nodeId, maxRate);
            // const auto counters = UbAlpsPacketTracker::GetNodeFlowTypeCounters(nodeId);
             // const DataRate sameColRate = UbHostAlps::EstimateInitialRateByType(
             //     nodeId,

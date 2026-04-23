@@ -445,10 +445,11 @@ void UbTransportChannel::AddAplsTagForDatapacketOnHost(Ptr<Packet> p){
          std::cerr << "[ERROR] No valid PST entry for ACK! reversepstkey:" << PstKey << std::endl;
          return;
      }
-         uint32_t path_id = rt->GetPidOnHostForPacketSpraying(pstEntry,p->GetSize());//
-            if (auto hostAlps = DynamicCast<UbHostAlps>(m_congestionCtrl)) {
-                hostAlps->AddBdpLikeInFlightBytes(p->GetSize());
-            }
+         
+          uint32_t path_id = rt->GetPidOnHostForPacketSpraying(pstEntry, p->GetSize());//
+          if (auto hostAlps = DynamicCast<UbHostAlps>(m_congestionCtrl)) {
+              hostAlps->AddBdpLikeInFlightBytes(p->GetSize());
+          }
          uint32_t path_length = 0;
          for (const auto* pitEntry : pstEntry->PitEntries) {
             if (pitEntry && pitEntry->GetPathId() == path_id) {
@@ -507,10 +508,11 @@ void UbTransportChannel::AddAplsTagForRetransPacketOnHost(Ptr<Packet> p ,uint32_
          std::cerr << "[ERROR] No valid PST entry for ACK! reversepstkey:" << PstKey << std::endl;
          return;
      }
-         uint32_t path_id = rt->GetPidOnHostForPacketSpraying(pstEntry,p->GetSize());//
-            if (auto hostAlps = DynamicCast<UbHostAlps>(m_congestionCtrl)) {
-                hostAlps->AddBdpLikeInFlightBytes(p->GetSize());
-            }
+
+          uint32_t path_id = rt->GetPidOnHostForPacketSpraying(pstEntry, p->GetSize());//
+          if (auto hostAlps = DynamicCast<UbHostAlps>(m_congestionCtrl)) {
+              hostAlps->AddBdpLikeInFlightBytes(p->GetSize());
+          }
          uint32_t path_length = 0;
          for (const auto* pitEntry : pstEntry->PitEntries) {
             if (pitEntry && pitEntry->GetPathId() == path_id) {
@@ -1589,6 +1591,9 @@ bool UbTransportChannel::IsLimited()
      auto routingProcess = NodeList::GetNode(m_nodeId)->GetObject<UbSwitch>()->GetRoutingProcess();
     if (routingProcess->GetRoutingAlgorithm() == UbRoutingProcess::UbRoutingAlgorithm::ALPS ){
         auto hostAlps = DynamicCast<UbHostAlps>(m_congestionCtrl);
+        if (routingProcess->IsAllPerPathBdpFull(m_src, m_dest, 0)) {
+            return true;
+        }
          if (hostAlps && hostAlps->IsBdpLikeFull(0)) {
              return true;
         }
